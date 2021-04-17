@@ -1,0 +1,5277 @@
+From 7ca4d6f64e0b479b1c5f4a9b9d685826b5a4e4b0 Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Mon, 31 Mar 2014 10:12:32 +0200
+Subject: [PATCH 1/6] Added support to generate experiments targeting RUN and
+ RUN+RSP
+
+---
+ .project                                     |  17 ++
+ .pydevproject                                |   8 +
+ addPath.sh                                   |  13 +
+ bimodalIndex.py                              |  95 +++++++
+ config/config.py                             |   3 +-
+ convert_exps.py                              |  60 ++++
+ gen/__init__.py                              |   4 +
+ gen/edf_generators.py                        |  36 ++-
+ gen/edf_generators.py.bak                    | 410 +++++++++++++++++++++++++++
+ gen/generator.py                             |   9 +
+ gen/run_generators.py                        | 340 ++++++++++++++++++++++
+ gen/run_task.py                              |  69 +++++
+ gen_exps.py                                  |  20 +-
+ mig_counter.py                               | 248 ++++++++++++++++
+ mygen                                        |   1 +
+ overhead_parser.py                           |  92 ++++++
+ run/experiment.py                            |  23 +-
+ run_exps.py                                  |  20 +-
+ run_reductor.py                              | 350 +++++++++++++++++++++++
+ schedRUN/__init__.py                         |   0
+ schedRUN/batchExps.py                        |  73 +++++
+ schedRUN/expconfig.py                        |  67 +++++
+ schedRUN/manager/ServerResourceManager.py    | 107 +++++++
+ schedRUN/manager/__init__.py                 |   0
+ schedRUN/model/ResourceDistributor.py        | 142 ++++++++++
+ schedRUN/model/SchedulingException.py        |   5 +
+ schedRUN/model/ServerResourceInterface.py    | 147 ++++++++++
+ schedRUN/model/SystemResourceGenerator.py    |  77 +++++
+ schedRUN/model/__init__.py                   |   0
+ schedRUN/model/rv.py                         |  86 ++++++
+ schedRUN/schedulability/__init__.py          |   0
+ schedRUN/schedulability/schedulabilityRUN.py |  69 +++++
+ schedRUN/test.py                             |  55 ++++
+ 33 files changed, 2628 insertions(+), 18 deletions(-)
+ create mode 100644 .project
+ create mode 100644 .pydevproject
+ create mode 100755 addPath.sh
+ create mode 100644 bimodalIndex.py
+ create mode 100755 convert_exps.py
+ create mode 100644 gen/edf_generators.py.bak
+ create mode 100644 gen/run_generators.py
+ create mode 100644 gen/run_task.py
+ create mode 100755 mig_counter.py
+ create mode 100755 mygen
+ create mode 100755 overhead_parser.py
+ create mode 100644 run_reductor.py
+ create mode 100644 schedRUN/__init__.py
+ create mode 100644 schedRUN/batchExps.py
+ create mode 100644 schedRUN/expconfig.py
+ create mode 100644 schedRUN/manager/ServerResourceManager.py
+ create mode 100644 schedRUN/manager/__init__.py
+ create mode 100644 schedRUN/model/ResourceDistributor.py
+ create mode 100644 schedRUN/model/SchedulingException.py
+ create mode 100644 schedRUN/model/ServerResourceInterface.py
+ create mode 100644 schedRUN/model/SystemResourceGenerator.py
+ create mode 100644 schedRUN/model/__init__.py
+ create mode 100644 schedRUN/model/rv.py
+ create mode 100644 schedRUN/schedulability/__init__.py
+ create mode 100644 schedRUN/schedulability/schedulabilityRUN.py
+ create mode 100644 schedRUN/test.py
+
+diff --git a/.project b/.project
+new file mode 100644
+index 0000000..27eb156
+--- /dev/null
++++ b/.project
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<projectDescription>
++	<name>experiment-scripts</name>
++	<comment></comment>
++	<projects>
++	</projects>
++	<buildSpec>
++		<buildCommand>
++			<name>org.python.pydev.PyDevBuilder</name>
++			<arguments>
++			</arguments>
++		</buildCommand>
++	</buildSpec>
++	<natures>
++		<nature>org.python.pydev.pythonNature</nature>
++	</natures>
++</projectDescription>
+diff --git a/.pydevproject b/.pydevproject
+new file mode 100644
+index 0000000..037bd25
+--- /dev/null
++++ b/.pydevproject
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="UTF-8" standalone="no"?>
++<?eclipse-pydev version="1.0"?><pydev_project>
++<pydev_pathproperty name="org.python.pydev.PROJECT_SOURCE_PATH">
++<path>/${PROJECT_DIR_NAME}</path>
++</pydev_pathproperty>
++<pydev_property name="org.python.pydev.PYTHON_PROJECT_VERSION">python 2.7</pydev_property>
++<pydev_property name="org.python.pydev.PYTHON_PROJECT_INTERPRETER">Default</pydev_property>
++</pydev_project>
+diff --git a/addPath.sh b/addPath.sh
+new file mode 100755
+index 0000000..a74f694
+--- /dev/null
++++ b/addPath.sh
+@@ -0,0 +1,13 @@
++#!/bin/bash
++
++PATHTOLIBLITMUS=/home/luca/RUN/liblitmus
++PATHTOFT=/home/luca/RUN/feather-trace-tools
++PATHTOSCHEDCAT=/home/luca/RUN/schedcat
++
++export PATH=$PATHTOLIBLITMUS:$PATHTOFT:$PATH
++
++export PYTHONPATH=$PATHTOSCHEDCAT:$PYTHONPATH
++
++#export PYTHONPATH=/home/luca/workspace/schedRUN/src:$PYTHONPATH
++
++# ./gen_exps.py -f RUN res_nmb=4 res_weight=0.1 res_distr=0.8 max_util=7.0 cpus=8
+diff --git a/bimodalIndex.py b/bimodalIndex.py
+new file mode 100644
+index 0000000..1428ba4
+--- /dev/null
++++ b/bimodalIndex.py
+@@ -0,0 +1,95 @@
++#!/usr/bin/env python
++'''
++Created on 31/ago/2013
++
++@author: Davide Compagnin
++'''
++
++import os
++from numpy import array
++from decimal import Decimal
++
++class PeriodicTask(object):
++    def __init__(self, exec_cost, period, id=None):
++        self.cost = exec_cost
++        self.period = period
++        self.id = id
++        
++    def utilization(self):
++        return Decimal(self.cost) / Decimal(self.period)
++
++class FixedRateTask(PeriodicTask):
++    
++    def __init__(self, exec_cost, period, id=None, server=None, level=-1):
++        super(FixedRateTask,self).__init__(exec_cost, period, id)
++        self.server = server
++        self.level = level
++        self.children = []
++        self.parent = None
++        
++    def dual_utilization(self):
++        return Decimal(1) - self.utilization()
++    
++    def get_children(self):
++        return self.children
++
++def convert_data(data):
++    '''Convert a non-python schedule file into the python format'''
++    regex = re.compile(
++        r"(?P<PROC>^"
++            r"(?P<HEADER>/proc/[\w\-]+?/)?"
++            r"(?P<ENTRY>[\w\-\/]+)"
++              r"\s*{\s*(?P<CONTENT>.*?)\s*?}$)|"
++        r"(?P<TASK>^"
++            r"(?:(?P<PROG>[^\d\-\s][\w\.]*?) )?\s*"
++            r"(?P<ARGS>[\w\-_\d\. \=]+)\s*$)",
++        re.S|re.I|re.M)
++
++    procs = []
++    tasks = []
++
++    for match in regex.finditer(data):
++        if match.group("PROC"):
++            header = match.group("HEADER") or "/proc/litmus/"
++            loc  = "{}{}".format(header, match.group("ENTRY"))
++            proc = (loc, match.group("CONTENT"))
++            procs.append(proc)
++        else:
++            prog = match.group("PROG") or DEFAULTS['prog']
++            spin = (prog, match.group("ARGS"))
++            tasks.append(spin)
++
++    return {'proc' : procs, 'task' : tasks}
++
++def main():
++
++    with open(sys.argv[1], 'r') as f:
++            data = f.read().strip()
++        
++    try:
++        schedule = eval(data)
++    except:
++        schedule = convert_data(data)
++
++    ts = []
++
++    for task_conf in schedule['task']:
++        
++        (task, args) = (task_conf[0], task_conf[1])
++        real_args = args.split()
++        #Get two last arguments as cost and period respectively
++        index = len(real_args) - 2
++        ts.append(FixedRateTask(int(real_args[index + 0]), int(real_args[index + 1])))
++
++    ts1 = []
++    ts2 = []
++    for t in ts:
++        if t.utilization() < Decimal("0.5")
++            ts1.append(t)
++        else
++            ts2.append(t)
++    
++
++    
++if __name__ == '__main__':
++    main()
+\ No newline at end of file
+diff --git a/config/config.py b/config/config.py
+index cfdfb05..be881ae 100644
+--- a/config/config.py
++++ b/config/config.py
+@@ -50,7 +50,8 @@ DEFAULTS = {'duration'    : 10,
+ SCHED_EVENTS = range(501, 513)
+ 
+ '''Overhead events.'''
+-OVH_BASE_EVENTS  = ['SCHED', 'RELEASE', 'SCHED2', 'TICK', 'CXS', 'LOCK', 'UNLOCK']
++#OVH_BASE_EVENTS  = ['TREE']
++OVH_BASE_EVENTS  = ['SCHED', 'RELEASE', 'TREE', 'SCHED2', 'TICK', 'CXS', 'LOCK', 'UNLOCK']
+ OVH_ALL_EVENTS   = ["%s_%s" % (e, t) for (e,t) in
+                     itertools.product(OVH_BASE_EVENTS, ["START","END"])]
+ OVH_ALL_EVENTS  += ['RELEASE_LATENCY']
+diff --git a/convert_exps.py b/convert_exps.py
+new file mode 100755
+index 0000000..7816ed0
+--- /dev/null
++++ b/convert_exps.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python
++'''
++Created on 25/giu/2013
++
++@author: davide
++'''
++import sys
++import run_exps
++import schedcat.model.tasks as tasks
++
++def _pack(taskset, cpus):
++        # Partition using worst-fit for most even distribution
++        utils = [0]*cpus
++        tasks = [0]*cpus
++        for t in taskset:
++            t.cpu = utils.index(min(utils))
++            utils[t.cpu] += t.utilization()
++            if utils[t.cpu] > 1.0:
++                print 'Capacity exceeded on bin {0}'.format(t.cpu)
++            tasks[t.cpu] += 1
++
++def main():
++    
++    if len(sys.argv) != 3:
++        raise Exception("Invalid parameters")
++    
++    fname = sys.argv[1]
++    cpus = int(sys.argv[2])
++    
++    with open(fname, 'r') as f:
++        data = f.read().strip()
++    
++    try:
++        schedule = eval(data)
++    except:
++        schedule = run_exps.convert_data(data)
++    
++    ts = []
++    for task_conf in schedule['task']:
++        
++        (task, args) = (task_conf[0], task_conf[1])
++        real_args = args.split()
++        
++        index = 0
++        if '-S' in real_args:
++            index = real_args.index('-S') + 2
++            
++        if '-p'in real_args:
++            index = real_args.index('-p') + 2
++            
++        ts.append(tasks.SporadicTask(int(real_args[index + 0]), int(real_args[index + 1])))
++    
++    ts.sort(key=lambda x: x.utilization(), reverse=True)
++    _pack(ts, cpus)
++    with open('out_sched.py', 'w') as out_file:
++        for t in ts:
++            out_file.write("-p {0} {1} {2}\n".format(t.cpu, t.cost, t.period))
++    
++if __name__ == '__main__':
++    main()
+\ No newline at end of file
+diff --git a/gen/__init__.py b/gen/__init__.py
+index 8c60b46..ef552ef 100644
+--- a/gen/__init__.py
++++ b/gen/__init__.py
+@@ -1,6 +1,10 @@
+ import generator as gen
+ import edf_generators as edf
++import run_generators as run
+ 
+ gen.register_generator("G-EDF", edf.GedfGenerator)
+ gen.register_generator("P-EDF", edf.PedfGenerator)
+ gen.register_generator("C-EDF", edf.CedfGenerator)
++gen.register_generator("RUN", run.RUNGenerator)
++
++gen.register_generator_resources("RUN", run.RUNGeneratorRes)
+diff --git a/gen/edf_generators.py b/gen/edf_generators.py
+index 8e4b8df..7fc9572 100644
+--- a/gen/edf_generators.py
++++ b/gen/edf_generators.py
+@@ -1,5 +1,10 @@
+ import generator as gen
+-import random
++#import random
++#import schedcat.mapping.binpack as binpack
++import schedcat.generator.tasks as tasks
++from decimal import *
++#from schedcat.model.tasks import SporadicTask
++
+ 
+ TP_TBASE = """#for $t in $task_set
+ {} $t.cost $t.period
+@@ -7,6 +12,8 @@ TP_TBASE = """#for $t in $task_set
+ TP_GLOB_TASK = TP_TBASE.format("")
+ TP_PART_TASK = TP_TBASE.format("-p $t.cpu")
+ 
++#ONE_MS = 1000000
++
+ class EdfGenerator(gen.Generator):
+     '''Creates sporadic task sets with the most common Litmus options.'''
+     def __init__(self, scheduler, templates, options, params):
+@@ -32,7 +39,7 @@ class EdfGenerator(gen.Generator):
+         udist = self._create_dist('utilization',
+                                   exp_params['utils'],
+                                   gen.NAMED_UTILIZATIONS)
+-
++        
+         ts = self._create_taskset(exp_params, pdist, udist)
+ 
+         self._customize(ts, exp_params)
+@@ -72,6 +79,7 @@ class PedfGenerator(PartitionedGenerator):
+     def __init__(self, params={}):
+         super(PedfGenerator, self).__init__("PSN-EDF", [], [], params)
+ 
++
+ class CedfGenerator(PartitionedGenerator):
+     TP_CLUSTER = "plugins/C-EDF/cluster{$level}"
+     CLUSTER_OPTION = gen.GenOption('level', ['L2', 'L3', 'All'], 'L2',
+@@ -87,3 +95,27 @@ class GedfGenerator(EdfGenerator):
+     def __init__(self, params={}):
+         super(GedfGenerator, self).__init__("GSN-EDF", [TP_GLOB_TASK],
+                                             [], params)
++        
++    def _create_taskset(self, params, periods, utils, max_util = None):
++        #if 'from_file' in params:
++        #    ts = self._from_file('/home/davide/Documenti/Tesi/project/exps_pack/dist=uni-medium/slack_dist=servers/sched=RUN_max-util=8.0/sched.py')
++        #    return ts
++        if 'max_util' in params:
++            max_util = float(params['max_util'])        
++            if (max_util < 0.0) or (max_util > float(params['cpus'])):
++                raise Exception('Incorrect max_util')
++        
++            tries = 0
++            tg = tasks.TaskGenerator(period=periods, util=utils)
++            print max_util
++            ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++            while len(ts) <= 0 and tries < 100:
++                print 'try: {0}'.format(tries)
++                ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++                tries += 1
++            print ts.utilization()
++            return ts
++        
++        else:
++            return super(GedfGenerator, self)._create_taskset(params, periods, utils, float(params['cpus']))
++
+diff --git a/gen/edf_generators.py.bak b/gen/edf_generators.py.bak
+new file mode 100644
+index 0000000..fa3dcd8
+--- /dev/null
++++ b/gen/edf_generators.py.bak
+@@ -0,0 +1,410 @@
++import generator as gen
++import random
++#import schedcat.mapping.binpack as binpack
++import schedcat.generator.tasks as tasks
++from gen.run_task import FixedRateTask
++import math
++import json
++from fractions import Fraction
++from decimal import *
++from schedcat.model.tasks import SporadicTask
++import run_exps
++
++TP_TBASE = """#for $t in $task_set
++{} $t.cost $t.period
++#end for"""
++TP_GLOB_TASK = TP_TBASE.format("")
++TP_PART_TASK = TP_TBASE.format("-p $t.cpu")
++TP_RUN_TASK = TP_TBASE.format("-S $t.server")
++TP_RUN_TASK_RES = TP_TBASE.format("-S $t.server #if len($t.resmodel)>0# -X RUNRSP #for $r in $t.resmodel# -Q $r -l $t.resmodel[r].max_write_length #end for# #end if#")
++
++#ONE_MS = 1000000
++
++def ignore(_):
++    pass
++
++class EdfGenerator(gen.Generator):
++    '''Creates sporadic task sets with the most common Litmus options.'''
++    def __init__(self, scheduler, templates, options, params):
++        super(EdfGenerator, self).__init__(scheduler, templates,
++                                           self.__make_options() + options,
++                                           params)
++
++    def __make_options(self):
++        '''Return generic EDF options.'''
++        return [gen.Generator._dist_option('utils', 'uni-medium',
++                                           gen.NAMED_UTILIZATIONS,
++                                           'Task utilization distributions.'),
++                gen.Generator._dist_option('periods', 'harmonic',
++                                           gen.NAMED_PERIODS,
++                                           'Task period distributions.')]
++
++    def _create_exp(self, exp_params):
++        '''Create a single experiment with @exp_params in @out_dir.'''
++        pdist = self._create_dist('period',
++                                  exp_params['periods'],
++                                  gen.NAMED_PERIODS)
++
++        udist = self._create_dist('utilization',
++                                  exp_params['utils'],
++                                  gen.NAMED_UTILIZATIONS)
++        
++        ts = self._create_taskset(exp_params, pdist, udist)
++
++        self._customize(ts, exp_params)
++
++        self._write_schedule(dict(exp_params.items() + [('task_set', ts)]))
++        self._write_params(exp_params)
++
++    def _customize(self, taskset, exp_params):
++        '''Configure a generated taskset with extra parameters.'''
++        pass
++
++
++class PartitionedGenerator(EdfGenerator):
++    def __init__(self, scheduler, templates, options, params):
++        super(PartitionedGenerator, self).__init__(scheduler,
++            templates + [TP_PART_TASK], options, params)
++
++    def _customize(self, taskset, exp_params):
++        cpus  = exp_params['cpus']
++        start = 0
++        if exp_params['release_master']:
++            cpus -= 1
++            start = 1
++
++        # Partition using worst-fit for most even distribution
++        utils = [0]*cpus
++        tasks = [0]*cpus
++        for t in taskset:
++            t.cpu = utils.index(min(utils))
++            utils[t.cpu] += t.utilization()
++            tasks[t.cpu] += 1
++
++            # Increment by one so release master has no tasks
++            t.cpu += start
++
++class PedfGenerator(PartitionedGenerator):
++    def __init__(self, params={}):
++        super(PedfGenerator, self).__init__("PSN-EDF", [], [], params)
++
++
++class CedfGenerator(PartitionedGenerator):
++    TP_CLUSTER = "plugins/C-EDF/cluster{$level}"
++    CLUSTER_OPTION = gen.GenOption('level', ['L2', 'L3', 'All'], 'L2',
++                                   'Cache clustering level.',)
++
++    def __init__(self, params={}):
++        super(CedfGenerator, self).__init__("C-EDF",
++                                            [CedfGenerator.TP_CLUSTER],
++                                            [CedfGenerator.CLUSTER_OPTION],
++                                            params)
++
++class GedfGenerator(EdfGenerator):
++    def __init__(self, params={}):
++        super(GedfGenerator, self).__init__("GSN-EDF", [TP_GLOB_TASK],
++                                            [], params)
++        
++    def _create_taskset(self, params, periods, utils, max_util = None):
++        #if 'from_file' in params:
++        #    ts = self._from_file('/home/davide/Documenti/Tesi/project/exps_pack/dist=uni-medium/slack_dist=servers/sched=RUN_max-util=8.0/sched.py')
++        #    return ts
++        if 'max_util' in params:
++            max_util = float(params['max_util'])        
++            if (max_util < 0.0) or (max_util > float(params['cpus'])):
++                raise Exception('Incorrect max_util')
++        
++            tries = 0
++            tg = tasks.TaskGenerator(period=periods, util=utils)
++            print max_util
++            ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++            while len(ts) <= 0 and tries < 100:
++                print 'try: {0}'.format(tries)
++                ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++                tries += 1
++            print ts.utilization()
++            return ts
++        
++        else:
++            return super(GedfGenerator, self)._create_taskset(params, periods, utils, float(params['cpus']))
++
++class RUNGenerator(EdfGenerator):
++    def __init__(self, params={}):
++        super(RUNGenerator, self).__init__("RUN",
++            [TP_RUN_TASK2], [], params)
++        self.server_count = 0
++
++    def _from_file(self, file_name):
++        with open(file_name, 'r') as f:
++            data = f.read().strip()
++        try:
++            schedule = eval(data)
++        except:
++            schedule = run_exps.convert_data(data)
++        ts = []
++        for task_conf in schedule['task']:
++            (task, args) = (task_conf[0], task_conf[1])
++            real_args = args.split()
++            index = 0
++            if '-S' in real_args:
++                index = real_args.index('-S') + 2
++            ts.append(SporadicTask(int(real_args[index + 0]), int(real_args[index + 1])))
++        return ts
++    
++    def _customize(self, taskset, exp_params):
++        if 'max_util' in exp_params:
++            print 'sched=RUN cpus={0} max_util={1} tasks={2}'.format(unicode(exp_params['cpus']), unicode(exp_params['max_util']), unicode(len(taskset)))
++        else:
++            print 'sched=RUN cpus={0} max_util={1} tasks={2}'.format(unicode(exp_params['cpus']), unicode('0.0'), unicode(len(taskset)))
++        cpus  = exp_params['cpus']
++        self.server_count = 0
++        data = self._reductor(taskset, cpus, exp_params)
++        tree_file = self.out_dir + "/tree.json"
++        with open(tree_file, 'wa') as f:
++            json.dump(data, f, indent=4)
++            
++    def _reductor(self, taskset, cpus, params):
++        
++        #First create fixed-rates        
++        n_tasks = len(taskset)
++        #On heavy task case #tasks may be less than #cpus
++        if (n_tasks < cpus):
++            print 'attention: #cpus has changed from {0} to {1}'.format(unicode(cpus),unicode(n_tasks))
++            cpus = n_tasks
++            
++        t_id = 0
++        fr_taskset = []
++        tot_util = Fraction()
++        
++        for t in taskset:
++            t.id = t_id
++            fr_taskset.append(FixedRateTask(t.cost, t.period, t.deadline, t_id))
++            t_id += 1
++            tot_util += Fraction(t.cost, t.period)
++        #Second distribuites unused cpu capacity (slack-pack)
++        print 'Total utilization: {0}'.format(Decimal(tot_util.numerator)/Decimal(tot_util.denominator))
++        
++        unused_capacity = Fraction(cpus,1) - tot_util
++        if (unused_capacity < Fraction()):
++            raise Exception('Unfeasible Taskset')
++
++
++        if self.usingResources :
++          #sys.path.append("/home/luca/workspace/schedRUN/src")
++          #import schedRUN.model.SystemResourceGenerator as srg
++          import schedRUN.schedulability.schedulabilityRUN as sRUN
++          helper = sRUN.SchedulabilityTestRUN(range(0, int(params['res_nmb'])), taskset)
++          isSchedulable = helper.isSchedulable(int(params['cpus']))
++          if not isSchedulable :
++            raise Exception('Unfeasible Taskset with RUNRSP')
++          firstLevelServers = helper.getServers()
++          
++          new_taskset = []
++          for server in firstLevelServers :
++            children = [x for x in fr_taskset if x.id in [y.id for y in server['tasks']]]
++            temp_task = FixedRateTask._aggregate(children, self.server_count, 0)
++            temp_task.cost = server['cost']
++            temp_task.period = server['period']
++            temp_task.deadline = server['period']
++            self.server_count += 1
++            new_taskset.append(temp_task)
++
++          unused_capacity = Fraction(cpus,1) - sum([Fraction(x.cost, x.period) for x in new_taskset])
++          new_taskset.sort(key=lambda x: x.utilization(), reverse=True)
++          self._distribuite_slack(new_taskset, unused_capacity)
++          self._dual(new_taskset)
++          
++        elif 'slack_dist' in params and params['slack_dist'] == 'tasks':
++            fr_taskset.sort(key=lambda x: x.util_frac(), reverse=True)
++            self._distribuite_slack(fr_taskset, unused_capacity)
++            new_taskset = self._pack(fr_taskset, cpus, 0)
++            self._dual(new_taskset)
++        else:
++            new_taskset = self._pack(fr_taskset, cpus, 0)
++            new_taskset.sort(key=lambda x: x.utilization(), reverse=True)
++            self._distribuite_slack(new_taskset, unused_capacity)
++            self._dual(new_taskset)
++        
++        unit_server = self._reduce(new_taskset, 1)
++        
++        if (len(unit_server) != 1):
++            raise Exception('Not a Unit-Server')
++        
++        if (unit_server[0].util_frac() != Fraction() and not(unit_server[0].util_frac().numerator == unit_server[0].util_frac().denominator)):
++            raise Exception('Not a Unit-Server')
++        
++        print 'Root level: {0}'.format(unicode(unit_server[0].level - 1)) 
++        
++        for t in taskset:
++            for fr_t in fr_taskset:
++                if (fr_t.id == t.id):
++                    t.server = fr_t.server
++                    
++        return FixedRateTask.serialize(unit_server[0])
++    
++    def _slack_dist(self, ts, slack):
++        
++        n_tasks = len(ts)
++        val_a = ts[0].dual_utilization()
++        val_b = slack / Decimal(n_tasks)
++        
++        unused_capacity = slack
++        
++        task_extra_util = min(val_a, val_b)
++        for t in ts:
++            if (t.dual_utilization() <= task_extra_util):
++                unused_capacity -= t.dual_utilization()
++                t.cost = t.period
++            else:
++                tmp_util = t.utilization()
++                t.cost += int(task_extra_util * Decimal(t.period))
++                unused_capacity -= (t.utilization() - tmp_util)
++        
++        tries = 10
++        while (unused_capacity > Decimal(0)) and (tries > 0):
++            for t in ts:
++                tmp_value = unused_capacity * Decimal(t.period)
++                if (t.dual_utilization() >= unused_capacity) and tmp_value == int(tmp_value):
++                    t.cost += int(tmp_value)
++                    unused_capacity = Decimal(0)
++                    break
++            if (unused_capacity > Decimal(0)):
++                for t in ts:
++                    if (t.dual_utilization() <= unused_capacity):
++                        unused_capacity -= t.dual_utilization()
++                        t.cost = t.period
++            tries -= 1
++            
++        if (unused_capacity > Decimal(0)):
++            raise Exception('Still capacity unused: ' + str(unused_capacity))
++    
++    def _distribuite_slack(self, ts, slack):
++        ts.sort(key=lambda x: x.util_frac(), reverse=True)
++        i = 0
++        unused_capacity = slack        
++        while (unused_capacity > Fraction()) and (i < len(ts)):
++            t = ts[i]
++            if (t.dual_util_frac() <= unused_capacity):
++                unused_capacity -= t.dual_util_frac()
++                t.cost = t.period
++            else:
++                tmp_frac = t.util_frac() + unused_capacity
++                t.cost = tmp_frac.numerator
++                t.period = tmp_frac.denominator
++                unused_capacity = Fraction()
++            i+=1            
++        if (unused_capacity > Fraction()):
++            raise Exception('Still capacity unused: ' + str(unused_capacity))
++        
++    def _dual(self, taskset):
++        for t in taskset:
++            t.cost = t.period - t.cost
++        
++    def _pack(self, taskset, cpus, level):
++        self.misfit = 0
++        n_bins = cpus
++        
++        taskset.sort(key=lambda x: x.util_frac(), reverse=True)
++        
++        bins = RUNGenerator.worst_fit(taskset, 
++                                      n_bins, 
++                                      Fraction(1,1), 
++                                      lambda x: x.util_frac(), 
++                                      self._misfit)
++        while (self.misfit > 0):
++            #n_bins += math.ceil(self.misfit)
++            n_bins += 1 #self.misfit
++            self.misfit = 0
++            bins = RUNGenerator.worst_fit(taskset, 
++                                          n_bins, 
++                                          Fraction(1,1), 
++                                          lambda x: x.util_frac(),
++                                          self._misfit)    
++        servers = []
++        for item in bins:
++            tmp_server = FixedRateTask._aggregate(item, self.server_count, level)
++            servers.append(tmp_server)
++            self.server_count += 1
++        
++        self.misfit = 0
++        return servers
++        
++    def _misfit(self, x):
++        #self.misfit += x.dual_utilization()
++        self.misfit += 1
++           
++    def _reduce(self, taskset, level):
++        utilization = Fraction()
++        for t in taskset:
++            utilization += t.util_frac()
++        
++        new_taskset = self._pack(taskset, 
++                                 int(math.ceil(utilization)), 
++                                 level)
++        self._dual(new_taskset)
++        
++        if (utilization <= Fraction(1,1)):
++            return new_taskset
++        else:
++            return self._reduce(new_taskset, level + 1)
++        
++    def _create_taskset(self, params, periods, utils, max_util = None):
++
++        self.usingResources = False
++        paramsRUN = [(x in params) for x in ['max_util', 'cpus']]
++        paramsRes = [(x in params) for x in ['res_nmb', 'res_weight', 'res_distr']]
++        if all(paramsRes) and all(paramsRUN) :
++          self.usingResources = True
++        elif any(paramsRes) :
++          raise Exception('Some argument missing: res_nmb, res_weight, res_distr, max_util, cpus')
++          
++        ''' Generate system with resources '''
++        if self.usingResources :
++
++          import sys
++          sys.path.append("/home/luca/workspace/schedRUN/src")
++          import schedRUN.model.SystemResourceGenerator as srg
++
++          rd = float(params['res_distr'])
++          rw = float(params['res_weight'])
++          rn = int(params['res_nmb'])
++          ul = float(params['max_util'])
++          cl = int(params['cpus'])
++          tg = srg.SystemResourcesGenerator(periodDistr=periods, 
++            utilDistr=utils, resDistr=rd, resWeight=rw, resNumber=rn, 
++            reqNumber=1, utilLimit=ul, cpuLimit=cl)
++          ts = tg.generateTaskSetLinear()
++
++          return ts
++          
++        elif 'max_util' in params:
++            max_util = float(params['max_util'])        
++            if (max_util < 0.0) or (max_util > float(params['cpus'])):
++                raise Exception('Incorrect max_util')
++             
++            tg = tasks.TaskGenerator(period=periods, util=utils)
++            ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++            #print ('#%d tasks' % len(ts))
++            return ts
++        else:
++            return super(RUNGenerator, self)._create_taskset(params, periods, utils, float(params['cpus']))
++    
++    @staticmethod
++    def worst_fit(items, bins, capacity=Fraction(1,1), weight=id, misfit=ignore, empty_bin=list):
++        sets = [empty_bin() for _ in xrange(0, bins)]
++        sums = [Fraction() for _ in xrange(0, bins)]
++        for x in items:
++            c = weight(x)
++            # pick the bin where the item will leave the most space
++            # after placing it, aka the bin with the least sum
++            candidates = [s for s in sums if s + c <= capacity]
++            if candidates:
++                # fits somewhere
++                i = sums.index(min(candidates))
++                sets[i] += [x]
++                sums[i] += c
++            else:
++                misfit(x)
++        return sets
++         
++        
+diff --git a/gen/generator.py b/gen/generator.py
+index 0999e84..656b508 100644
+--- a/gen/generator.py
++++ b/gen/generator.py
+@@ -34,6 +34,8 @@ NAMED_UTILIZATIONS = {
+                                      (rv.uniform(  0.5, 0.9), 3)]),
+     'bimo-heavy'    : rv.multimodal([(rv.uniform(0.001, 0.5), 4),
+                                      (rv.uniform(  0.5, 0.9), 5)]),
++    'bimo-hheavy'   : rv.multimodal([(rv.uniform(0.1, 0.5), 3),
++                                     (rv.uniform(  0.5, 0.9), 6)]),
+ }
+ 
+ '''Components of Cheetah template for schedule file'''
+@@ -264,9 +266,16 @@ class Generator(object):
+ 
+ 
+ generators = {}
++generators_resources = {}
+ 
+ def register_generator(name, clazz):
+     generators[name] = clazz
+ 
++def register_generator_resources(name, clazz) :
++    generators_resources[name] = clazz
++
+ def get_generators():
+     return generators
++
++def get_generators_resources() :
++    return generators_resources
+diff --git a/gen/run_generators.py b/gen/run_generators.py
+new file mode 100644
+index 0000000..846bb8b
+--- /dev/null
++++ b/gen/run_generators.py
+@@ -0,0 +1,340 @@
++import math
++from decimal import *
++from fractions import Fraction
++import json
++import schedcat.generator.tasks as tasks
++from gen.run_task import FixedRateTask
++import run_exps
++import edf_generators as edfGen
++
++TP_TBASE = """#for $t in $task_set
++{} $t.cost $t.period
++#end for"""
++TP_RUN_TASK = TP_TBASE.format("-S $t.server")
++TP_RUN_TASK_RES = TP_TBASE.format("-S $t.server #if len($t.resmodel)>0# -X RUN #for $r in $t.resmodel# -Q $r -L $t.resmodel[r].max_write_length #end for# #end if#")
++
++MAX_TRIES = 20
++def ignore(_):
++    pass
++
++class RUNGenerator(edfGen.EdfGenerator):
++    def __init__(self, params={}, template=[TP_RUN_TASK]):
++        super(RUNGenerator, self).__init__("RUN",
++            template, [], params)
++        self.server_count = 0
++
++    def _from_file(self, file_name):
++        with open(file_name, 'r') as f:
++            data = f.read().strip()
++        try:
++            schedule = eval(data)
++        except:
++            schedule = run_exps.convert_data(data)
++        ts = []
++        for task_conf in schedule['task']:
++            (task, args) = (task_conf[0], task_conf[1])
++            real_args = args.split()
++            index = 0
++            if '-S' in real_args:
++                index = real_args.index('-S') + 2
++            ts.append(SporadicTask(int(real_args[index + 0]), int(real_args[index + 1])))
++        return ts
++    
++    def _create_exp(self, exp_params) :
++      tries = 0
++      done = False
++      while not done :
++        try :
++          super(RUNGenerator, self)._create_exp(exp_params)
++          done = True
++        except Exception, e :
++          tries += 1
++          if tries >= MAX_TRIES :
++            print('Unfeasible parameters for {0} tasksets'.format(MAX_TRIES))
++            return
++      print "--- Found solution in %d tries"%(tries+1)
++      return
++    
++    def _customize(self, taskset, exp_params):
++        if 'max_util' in exp_params:
++            print 'sched=RUN cpus={0} max_util={1} tasks={2}'.format(unicode(exp_params['cpus']), unicode(exp_params['max_util']), unicode(len(taskset)))
++        else:
++            print 'sched=RUN cpus={0} max_util={1} tasks={2}'.format(unicode(exp_params['cpus']), unicode('0.0'), unicode(len(taskset)))
++        cpus  = exp_params['cpus']
++        self.server_count = 0
++        data = self._reductor(taskset, cpus, exp_params)
++        tree_file = self.out_dir + "/tree.json"
++        with open(tree_file, 'wa') as f:
++            json.dump(data, f, indent=4)
++            
++    def _reductor(self, taskset, cpus, params):
++        
++        #First create fixed-rates        
++        n_tasks = len(taskset)
++        #On heavy task case #tasks may be less than #cpus
++        if (n_tasks < cpus):
++            print 'attention: #cpus has changed from {0} to {1}'.format(unicode(cpus),unicode(n_tasks))
++            cpus = n_tasks
++
++        new_taskset = self._perform_first_packing(taskset, cpus, params)
++        unit_server = self._reduce(new_taskset, 1)
++        
++        if (len(unit_server) != 1 or 
++            (unit_server[0].util_frac() != Fraction(0,1) and 
++             unit_server[0].util_frac() != Fraction(1,1))) :
++            #not(unit_server[0].util_frac().numerator == unit_server[0].util_frac().denominator)):
++            raise Exception('Not a Unit-Server')
++        
++        print 'Root level: {0}'.format(unicode(unit_server[0].level - 1)) 
++                    
++        return FixedRateTask.serialize(unit_server[0])
++    
++    def _perform_first_packing(self, taskset, cpus, params) :
++
++        t_id = 0
++        fr_taskset = []
++        tot_util = Fraction()
++        
++        for t in taskset:
++            t.id = t_id
++            fr_taskset.append(FixedRateTask(t.cost, t.period, t.deadline, t_id))
++            t_id += 1
++            tot_util += Fraction(t.cost, t.period)
++        #Second distribuites unused cpu capacity (slack-pack)
++        print 'Total utilization: {0}'.format(Decimal(tot_util.numerator)/Decimal(tot_util.denominator))
++        
++        unused_capacity = Fraction(cpus,1) - tot_util
++        if (unused_capacity < Fraction()):
++            raise Exception('Unfeasible Taskset')
++            
++        if 'slack_dist' in params and params['slack_dist'] == 'tasks':
++            fr_taskset.sort(key=lambda x: x.util_frac(), reverse=True)
++            self._distribuite_slack(fr_taskset, unused_capacity)
++            new_taskset = self._pack(fr_taskset, cpus, 0)
++            self._dual(new_taskset)
++        else:
++            new_taskset = self._pack(fr_taskset, cpus, 0)
++            new_taskset.sort(key=lambda x: x.utilization(), reverse=True)
++            self._distribuite_slack(new_taskset, unused_capacity)
++            self._dual(new_taskset)
++
++        for t in taskset:
++            for fr_t in fr_taskset:
++                if (fr_t.id == t.id):
++                    t.server = fr_t.server
++
++        return new_taskset
++        
++    
++    def _slack_dist(self, ts, slack):
++        
++        n_tasks = len(ts)
++        val_a = ts[0].dual_utilization()
++        val_b = slack / Decimal(n_tasks)
++        
++        unused_capacity = slack
++        
++        task_extra_util = min(val_a, val_b)
++        for t in ts:
++            if (t.dual_utilization() <= task_extra_util):
++                unused_capacity -= t.dual_utilization()
++                t.cost = t.period
++            else:
++                tmp_util = t.utilization()
++                t.cost += int(task_extra_util * Decimal(t.period))
++                unused_capacity -= (t.utilization() - tmp_util)
++        
++        tries = 10
++        while (unused_capacity > Decimal(0)) and (tries > 0):
++            for t in ts:
++                tmp_value = unused_capacity * Decimal(t.period)
++                if (t.dual_utilization() >= unused_capacity) and tmp_value == int(tmp_value):
++                    t.cost += int(tmp_value)
++                    unused_capacity = Decimal(0)
++                    break
++            if (unused_capacity > Decimal(0)):
++                for t in ts:
++                    if (t.dual_utilization() <= unused_capacity):
++                        unused_capacity -= t.dual_utilization()
++                        t.cost = t.period
++            tries -= 1
++            
++        if (unused_capacity > Decimal(0)):
++            raise Exception('Still capacity unused: ' + str(unused_capacity))
++    
++    def _distribuite_slack(self, ts, slack):
++        ts.sort(key=lambda x: x.util_frac(), reverse=True)
++        i = 0
++        unused_capacity = slack        
++        while (unused_capacity > Fraction()) and (i < len(ts)):
++            t = ts[i]
++            if (t.dual_util_frac() <= unused_capacity):
++                unused_capacity -= t.dual_util_frac()
++                t.cost = t.period
++            else:
++                tmp_frac = t.util_frac() + unused_capacity
++                t.cost = tmp_frac.numerator
++                t.period = tmp_frac.denominator
++                unused_capacity = Fraction()
++            i+=1            
++        if (unused_capacity > Fraction()):
++            raise Exception('Still capacity unused: ' + str(unused_capacity))
++        
++    def _dual(self, taskset):
++        for t in taskset:
++            t.cost = t.period - t.cost
++        
++    def _pack(self, taskset, cpus, level):
++        self.misfit = 0
++        n_bins = cpus
++        
++        taskset.sort(key=lambda x: x.util_frac(), reverse=True)
++        
++        bins = RUNGenerator.worst_fit(taskset, 
++                                      n_bins, 
++                                      Fraction(1,1), 
++                                      lambda x: x.util_frac(), 
++                                      self._misfit)
++        while (self.misfit > 0):
++            #n_bins += math.ceil(self.misfit)
++            n_bins += 1 #self.misfit
++            self.misfit = 0
++            bins = RUNGenerator.worst_fit(taskset, 
++                                          n_bins, 
++                                          Fraction(1,1), 
++                                          lambda x: x.util_frac(),
++                                          self._misfit)    
++        servers = []
++        for item in bins:
++            tmp_server = FixedRateTask._aggregate(item, self.server_count, level)
++            servers.append(tmp_server)
++            self.server_count += 1
++        
++        self.misfit = 0
++        return servers
++        
++    def _misfit(self, x):
++        #self.misfit += x.dual_utilization()
++        self.misfit += 1
++           
++    def _reduce(self, taskset, level):
++        utilization = Fraction()
++        for t in taskset:
++            utilization += t.util_frac()
++        
++        new_taskset = self._pack(taskset, 
++                                 int(math.ceil(utilization)), 
++                                 level)
++        self._dual(new_taskset)
++        
++        if (utilization <= Fraction(1,1)):
++            return new_taskset
++        else:
++            return self._reduce(new_taskset, level + 1)
++        
++    def _create_taskset(self, params, periods, utils, max_util = None):
++
++        if 'max_util' in params:
++            max_util = float(params['max_util'])        
++            if (max_util < 0.0) or (max_util > float(params['cpus'])):
++                raise Exception('Incorrect max_util')
++             
++            tg = tasks.TaskGenerator(period=periods, util=utils)
++            ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++            #print ('#%d tasks' % len(ts))
++            return ts
++        else:
++            return super(RUNGenerator, self)._create_taskset(params, periods, utils, float(params['cpus']))
++    
++    @staticmethod
++    def worst_fit(items, bins, capacity=Fraction(1,1), weight=id, misfit=ignore, empty_bin=list):
++        sets = [empty_bin() for _ in xrange(0, bins)]
++        sums = [Fraction() for _ in xrange(0, bins)]
++        for x in items:
++            c = weight(x)
++            # pick the bin where the item will leave the most space
++            # after placing it, aka the bin with the least sum
++            candidates = [s for s in sums if s + c <= capacity]
++            if candidates:
++                # fits somewhere
++                i = sums.index(min(candidates))
++                sets[i] += [x]
++                sums[i] += c
++            else:
++                misfit(x)
++        return sets
++
++class RUNGeneratorRes(RUNGenerator):
++
++  def __init__(self, params={}, template=[TP_RUN_TASK_RES]) :
++    super(RUNGeneratorRes, self).__init__(template=template, params=params)
++
++
++  def _create_taskset(self, params, periods, utils, max_util = None):
++
++    paramsRes = [(x in params) for x in ['res_nmb', 'res_weight', 'res_distr', 'max_util', 'cpus']]
++    if not all(paramsRes) :
++      raise Exception('Some argument missing: res_nmb, res_weight, res_distr, max_util, cpus')
++          
++    ''' Generate system with resources '''
++    import sys
++    import schedRUN.model.SystemResourceGenerator as srg
++
++    rd = float(params['res_distr'])
++    rw = float(params['res_weight'])
++    rn = int(params['res_nmb'])
++    ul = float(params['max_util'])
++    cl = int(params['cpus'])
++    tg = srg.SystemResourcesGenerator(periodDistr=periods, 
++      utilDistr=utils, resDistr=rd, resWeight=rw, resNumber=rn, 
++      reqNumber=1, utilLimit=ul, cpuLimit=cl)
++    ts = tg.generateTaskSetLinear()
++
++    return ts
++
++  def _perform_first_packing(self, taskset, cpus, params) :
++
++    import schedRUN.schedulability.schedulabilityRUN as sRUN
++    
++    helper = sRUN.SchedulabilityTestRUN(range(0, int(params['res_nmb'])), taskset)
++    isSchedulable = helper.isSchedulable(int(params['cpus']))
++
++    if not isSchedulable :
++      raise Exception('Unfeasible Taskset with RUNRSP')
++
++    firstLevelServers = helper.getServers()
++    new_taskset = []
++    for server in firstLevelServers :
++      newFixedRateTask = FixedRateTask(
++        exec_cost = server['cost'],
++        period    = server['period'],
++        deadline  = server['period'],
++        id        = self.server_count,
++        server    = None,
++        level     = 0)
++      for t in server['tasks'] :
++        t.server = self.server_count
++        newFixedRateTask.children.append(t)
++        """ we also need to restore the values before the scaling """
++        #t.cost = float(t.cost)/float(srg.SCALING_PARAM)
++        #t.period = float(t.period)/float(srg.SCALING_PARAM)
++        #t.deadline = float(t.deadline)/float(srg.SCALING_PARAM)
++        #for r in t.resmodel :
++        #  t.resmodel[r].max_write_length = float(t.resmodel[r].max_write_length)/float(srg.SCALING_PARAM)
++      
++      new_taskset.append(newFixedRateTask)
++      self.server_count += 1
++
++    """ We know for sure that the taskset is schedulable, but it can be that
++        the slack of the system is too big (the system can afford to have one 
++        or more unused processors). We manage accordingly such slack and reduce
++        the number of necessary cpu to run the system. """
++    systemUtilization = sum([Fraction(x.cost, x.period) for x in new_taskset])
++    necessaryCPUs = int(math.ceil(float(systemUtilization.numerator)/systemUtilization.denominator))
++    unused_capacity = Fraction(necessaryCPUs,1) - systemUtilization
++    new_taskset.sort(key=lambda x: x.utilization(), reverse=True)
++    self._distribuite_slack(new_taskset, unused_capacity)
++    
++    self._dual(new_taskset)
++    
++    return new_taskset
+diff --git a/gen/run_task.py b/gen/run_task.py
+new file mode 100644
+index 0000000..3fbf3c2
+--- /dev/null
++++ b/gen/run_task.py
+@@ -0,0 +1,69 @@
++'''
++Created on 07/giu/2013
++
++@author: davide
++'''
++import schedcat.model.tasks as tasks
++from decimal import Decimal
++from fractions import Fraction
++
++class FixedRateTask(tasks.SporadicTask):
++    
++    def __init__(self, exec_cost, period, deadline=None, id=None, server=None, level=-1):
++        super(FixedRateTask,self).__init__(exec_cost, period, deadline, id)
++        self.server = server
++        self.level = level
++        self.children = []
++        self.parent = None
++        
++    def dual_utilization(self):
++        return Decimal(1) - self.utilization()
++    
++    def dual_util_frac(self):
++        return Fraction(self.period - self.cost, self.period)
++    
++    def utilization(self):
++        return Decimal(self.cost) / Decimal(self.period)
++    
++    def util_frac(self):
++        return Fraction(self.cost, self.period)
++    
++    def get_children(self):
++        return self.children
++    
++    @staticmethod
++    def _aggregate(task_list, server, level):
++        
++        tot_util = Fraction()
++        for t in task_list:
++            tot_util += t.util_frac()
++        new_task = FixedRateTask(tot_util.numerator, 
++                                 tot_util.denominator, 
++                                 tot_util.denominator, 
++                                 server, 
++                                 None,
++                                 level)
++        
++        for t in task_list:
++            t.parent = new_task
++            t.server = server
++            new_task.children.append(t)
++        return new_task
++    
++    @staticmethod
++    def serialize(task):
++        obj = {
++            'id': task.id,
++            'cost': task.cost,
++            'period': task.period,
++            'level' : task.level,
++            'children': []
++        }
++        if (task.level > 0):
++            for ch in task.get_children():
++                obj['children'].append(FixedRateTask.serialize(ch))
++            
++        return obj
++        
++        
++    
+\ No newline at end of file
+diff --git a/gen_exps.py b/gen_exps.py
+index 00ce27b..8016032 100755
+--- a/gen_exps.py
++++ b/gen_exps.py
+@@ -27,6 +27,8 @@ def parse_args():
+     parser.add_option('-d', '--describe-generators', metavar='generator[,..]',
+                       dest='described', default=None,
+                       help='describe parameters for generator(s)')
++    parser.add_option('-r', '--use-resources', dest='resources', default=False,
++                      help='using resources with RUNSRP', action='store_true')
+ 
+     return parser.parse_args()
+ 
+@@ -41,7 +43,7 @@ def load_file(fname):
+         del values['generator']
+         return generator, values
+     except:
+-           raise IOError("Invalid generation file: %s" % fname)
++        raise IOError("Invalid generation file: %s" % fname)
+ 
+ def print_descriptions(described):
+     for generator in described.split(','):
+@@ -53,7 +55,7 @@ def print_descriptions(described):
+ 
+ def main():
+     opts, args = parse_args()
+-
++    
+     # Print generator information on the command line
+     if opts.list_gens:
+         print(", ".join(gen.get_generators()))
+@@ -76,6 +78,8 @@ def main():
+     global_params = dict(map(lambda x : tuple(x.split("=")), params))
+     for k, v in global_params.iteritems():
+         global_params[k] = v.split(',')
++        
++    print (global_params)
+ 
+     exp_sets  = map(load_file, files)
+     exp_sets += map(lambda x: (x, {}), gen_list)
+@@ -85,14 +89,22 @@ def main():
+     if not os.path.exists(opts.out_dir):
+         os.mkdir(opts.out_dir)
+ 
++    if 'max_util' in global_params :
++      global_params['tasks'] = [0]
++
+     for gen_name, gen_params in exp_sets:
+-        if gen_name not in gen.get_generators():
++        if (not opts.resources) and ( gen_name not in gen.get_generators()):
+             raise ValueError("Invalid generator '%s'" % gen_name)
++        elif (opts.resources) and (gen_name not in gen.get_generators_resources()) :
++            raise ValueError("Invalid generator with resources '%s'" % gen_name)
+ 
+         sys.stderr.write("Creating experiments with %s generator...\n" % gen_name)
+ 
+         params = dict(gen_params.items() + global_params.items())
+-        clazz  = gen.get_generators()[gen_name]
++        if opts.resources :
++          clazz = gen.get_generators_resources()[gen_name]
++        else :
++          clazz  = gen.get_generators()[gen_name]
+ 
+         generator = clazz(params=params)
+ 
+diff --git a/mig_counter.py b/mig_counter.py
+new file mode 100755
+index 0000000..6dc6a22
+--- /dev/null
++++ b/mig_counter.py
+@@ -0,0 +1,248 @@
++#!/usr/bin/env python
++'''
++Created on 26/giu/2013
++
++@author: davide
++'''
++import sys
++import csv
++#from symbol import except_clause
++from decimal import Decimal  
++
++ONE_MS = 1000000
++
++class Event(object):
++    def __init__(self, id, task, job, type, time, cpu):
++        self.id = id
++        self.task = task
++        self.job = job
++        self.type = type
++        self.time = time
++        self.cpu = cpu
++
++def main():
++    
++    cpus = len(sys.argv) - 1;
++    
++    if cpus < 1:
++        raise Exception("No data")
++    
++    data = []
++    for i in range(0,cpus):
++        with open(sys.argv[i + 1]) as f:
++            tmp1 = f.readlines()
++            tmp2 = []
++            for line in tmp1:
++                tmp_line = line.rstrip('\n')
++                if len(tmp_line) > 0:
++                    tmp2.append(tmp_line)
++            data.append(tmp2)
++    
++    keys = set(['release','switch_to','switch_away','completion'])
++    
++    by_cpu_events = {}
++    for i in range(0,cpus):
++        by_cpu_events[i] = []
++        for j in xrange(0, len(data[i]), 4):
++            try:
++                id = int((data[i][j + 0].split(':')[1]).strip())
++                tmp = (data[i][j + 1].split(':')[1]).split('.')
++                task = int(tmp[0].strip())
++                job = int(tmp[1].strip())
++                type = (data[i][j + 2].split(':')[1]).strip()
++                time = long((data[i][j + 3].split(':')[1]).strip())
++                e = Event(id, task, job, type, time, i)
++                if e.type in keys:
++                    by_cpu_events[i].append(e)
++            except:
++                print 'Parsing error: event {0} on cpu {1} ignored. {2}'.format(unicode(str(id)), unicode(str(i)), unicode(sys.exc_info()[0]))
++    
++    for t in by_cpu_events.keys():
++        by_cpu_events[t].sort(key = lambda x: x.time)
++    
++    by_task_events = {}
++    for i in by_cpu_events.keys():
++        for e in by_cpu_events[i]:
++            if e.task not in by_task_events.keys():
++                by_task_events[e.task] = []
++            by_task_events[e.task].append(e)
++    
++    for t in by_task_events.keys():
++        by_task_events[t].sort(key = lambda x: x.time)
++    
++    by_task_pre = dict.fromkeys(by_task_events.keys(),0)
++    by_task_mig = dict.fromkeys(by_task_events.keys(),0)
++    by_task_jobs = dict.fromkeys(by_task_events.keys(),0)
++    by_task_miss = dict.fromkeys(by_task_events.keys(),0)
++    
++    by_task_job_exec = dict.fromkeys(by_task_events.keys(),[])
++    for t in by_task_events.keys():
++        by_task_job_exec[t] = [0]*(by_task_events[t][-1].job)
++    
++    by_task_wcet = dict.fromkeys(by_task_events.keys(),0)
++    by_task_overhead_ratio = dict.fromkeys(by_task_events.keys(),Decimal(0))
++    
++    for i in by_cpu_events.keys():
++        last_switch_to = None
++        for e in by_cpu_events[i]:
++            if e.type == 'switch_to':
++#                 if last_switch_to != None:
++#                     by_task_job_exec[last_switch_to.task][last_switch_to.job - 1] += (e.time - last_switch_to.time) 
++                last_switch_to = e
++            if e.type == 'switch_away':
++                if last_switch_to != None:
++                    if (last_switch_to.task != e.task or last_switch_to.job != e.job):
++                        raise Exception('Error on sequence')
++                    else:
++                        by_task_job_exec[last_switch_to.task][last_switch_to.job - 1] += (e.time - last_switch_to.time)
++                      
++                
++    for t in by_task_events.keys():
++        by_task_wcet[t] = max(by_task_job_exec[t])
++    for t in by_task_events.keys():
++        ns_to_ms = (by_task_wcet[t] / ONE_MS) * ONE_MS
++        if Decimal(ns_to_ms) > Decimal(0):
++        	by_task_overhead_ratio[t] = round((Decimal(by_task_wcet[t] - ns_to_ms) / Decimal(ns_to_ms)),3)
++    
++    
++    for t in by_task_events.keys():
++        
++        prec_event = None
++        last_rel = None
++        num_of_switch_to = 1
++        last_switch_to = None
++        
++        tmp_event = None
++        
++        for e in by_task_events[t]:
++            
++            if e.type not in keys:
++                print 'Event type error'
++                raise Exception('Event type error')
++                
++            if (prec_event != None) and (e.time < prec_event.time):
++                print 'Out-of-order event caught'
++                raise Exception('Out-of-order event caught')
++            
++            if e.type == 'release':
++                
++                if (tmp_event != None) and (tmp_event.type == 'release'):
++                    by_task_miss[t] += 1
++                    
++                tmp_event = e
++                last_rel = e
++                
++            if e.type == 'completion':
++                
++                if last_rel == None:
++                    print 'event: completion {0} without release'.format(unicode(e.id))
++                    raise Exception('Completion and last_rel == None')
++                
++                if (e.job < last_rel.job) or (tmp_event != None) and (tmp_event.type == 'completion'):
++                    by_task_miss[t] += 1
++                    print 'event: miss, task: {0}, time: {1}'.format(unicode(e.task),unicode(e.time))
++                tmp_event = e
++#                 if e.job < last_rel.job:
++#                     print 'WARNING: Completion whithout release'
++#                     raise Exception('Completion whithout release')
++                
++#                 if e.job < last_rel.job:
++#                     by_task_miss[t] += 1
++                
++                
++                
++                by_task_jobs[t] += 1
++                
++            if e.type == 'switch_to':
++                
++                if (last_switch_to != None) and (last_switch_to.job > e.job):
++                    print 'Switch_to out of order'
++                    raise Exception('Switch_to out of order')
++                
++                if (last_switch_to == None) or (last_switch_to.job < e.job):
++                    num_of_switch_to = 1
++                else:
++                    num_of_switch_to += 1
++                    
++                if num_of_switch_to > 1:
++                    by_task_pre[t] += 1
++                    if last_switch_to.cpu != e.cpu:
++                        by_task_mig[t] += 1
++                        #print 'event: migration, task: {0}, time: {1}'.format(unicode(e.task),unicode(e.time))
++                
++                last_switch_to = e
++            
++            prec_event = e
++                            
++    out_data = dict.fromkeys(by_task_events.keys(),[])
++    for t in by_task_events.keys():
++        out_data[t] = [by_task_jobs[t], by_task_wcet[t], by_task_overhead_ratio[t], by_task_pre[t], by_task_mig[t], by_task_miss[t]]
++    
++    with open('out_stat.csv', 'wb') as file:
++        writer = csv.writer(file)
++        for key, value in out_data.items():
++            writer.writerow([key, value[0], value[1], value[2], value[3], value[4], value[5]])
++    
++    jobs_tot = 0
++    mig_tot = 0
++    pre_tot = 0
++    miss_tot = 0
++    for t in by_task_events.keys():
++        jobs_tot += by_task_jobs[t]
++        mig_tot += by_task_mig[t]
++        pre_tot += by_task_pre[t]
++        miss_tot += by_task_miss[t]
++        
++    print "-------------------------------------------------------"
++    print "jobs: "+ str(jobs_tot) + ", preempt: " + str(pre_tot) + ", migrat: " + str(mig_tot) + ", miss: " + str(miss_tot)
++    
++    with open('out_stat_tot.csv', 'wb') as file:
++        writer = csv.writer(file)
++        writer.writerow([jobs_tot, pre_tot, mig_tot, miss_tot])
++    
++    if (jobs_tot > 0):
++        avg_pre = float(pre_tot) / jobs_tot
++        avg_mig = float(mig_tot) / jobs_tot
++        avg_miss = float(miss_tot) / jobs_tot
++        
++        avg_pre = round(avg_pre,8)
++        avg_mig = round(avg_mig,8)
++        avg_miss = round(avg_miss,8)
++    
++        with open('out_stat_avg.csv', 'wb') as file:
++            writer = csv.writer(file)
++            writer.writerow([jobs_tot, avg_pre, avg_mig, avg_miss])
++    
++        
++    
++            
++#     with open('out_pre.csv', 'wb') as file:
++#         writer = csv.writer(file)
++#         for key, value in by_task_pre.items():
++#             writer.writerow([key, value])
++#             
++#     with open('out_migs.csv', 'wb') as file:
++#         writer = csv.writer(file)
++#         for key, value in by_task_mig.items():
++#             writer.writerow([key, value])
++#             
++#     with open('out_jobs.csv', 'wb') as file:
++#         writer = csv.writer(file)
++#         for key, value in by_task_jobs.items():
++#             writer.writerow([key, value])
++    
++    #Parsing           
++    #reader = csv.reader(open('dict.csv', 'rb'))
++    #mydict = dict(x for x in reader)
++                    
++                
++    
++    
++    #print 'ciao'
++            
++            
++    
++    
++
++if __name__ == '__main__':
++    main()
+diff --git a/mygen b/mygen
+new file mode 100755
+index 0000000..8d88bd4
+--- /dev/null
++++ b/mygen
+@@ -0,0 +1 @@
++./gen_exps.py -fr RUN -n10 max_util=7.1 cpus=8 res_distr=0.5 res_weight=0.01 res_nmb=4
+diff --git a/overhead_parser.py b/overhead_parser.py
+new file mode 100755
+index 0000000..519ecf1
+--- /dev/null
++++ b/overhead_parser.py
+@@ -0,0 +1,92 @@
++#!/usr/bin/env python
++'''
++Created on 12/lug/2013
++
++@author: davide
++'''
++import sys
++import csv
++import numpy as np
++import os
++from optparse import OptionParser
++
++def_out_file = 'out_stat_overhead.csv'
++def_release = 'ft_release.csv'
++def_schedule = 'ft_schedule.csv'
++
++def parse_args():
++    parser = OptionParser("usage: %prog [options]")
++    
++    parser.add_option('-o', '--out-file', dest='out_file',
++                      help='file for data output',
++                      default=("%s/%s" % (os.getcwd(), def_out_file)))
++    
++    parser.add_option('-r', '--release', dest='ft_release',
++                      help='ft release csv file',
++                      default=("%s/%s" % (os.getcwd(), def_release)))
++     
++    parser.add_option('-s', '--schedule', dest='ft_schedule',
++                      help='ft schedule csv file',
++                      default=("%s/%s" % (os.getcwd(), def_schedule)))
++
++    return parser.parse_args()
++
++def main():
++    opts, args = parse_args()
++    dirname = os.path.dirname(opts.out_file)
++    
++    if not os.path.exists(dirname):
++        raise Exception(dirname + ' not found')
++    
++    files = {
++             'release': None,
++             'schedule': None
++    }
++    
++    if os.path.exists(opts.ft_release):
++        files['release'] = opts.ft_release
++    if os.path.exists(opts.ft_schedule):
++        files['schedule'] = opts.ft_schedule
++    
++#     files['release'] = [s for s in args if 'release' in s]
++#     files['schedule'] = [s for s in args if 'schedule' in s]
++    
++    data = []
++    
++    write = False
++    
++    for k in files.keys():
++        if files[k] != None:
++            try:  
++                with open(files[k], 'rb') as f:
++                    tmp_data = []
++                    csv_data = csv.reader(f)
++                    for row in csv_data:
++                        tmp_data.append(long(row[2].strip()))
++                    
++                    max_value = max(tmp_data)
++                    min_value = min(tmp_data)
++                    avg_value = np.mean(tmp_data)
++                    std_value = np.std(tmp_data)
++                    sum_value = sum(tmp_data)
++                    
++                    data.append(max_value)
++                    data.append(min_value)
++                    data.append(long(avg_value))
++                    data.append(long(std_value))
++                    data.append(sum_value)
++                    
++                    write = True
++                    
++            except IOError:
++                print k + ' file not found!'
++        
++    if write:
++        with open(opts.out_file, 'wb') as f:
++            writer = csv.writer(f)
++            writer.writerow(data)
++    else:
++        print 'Nothing to write. You are probably missing some input files.'
++
++if __name__ == '__main__':
++    main()
+\ No newline at end of file
+diff --git a/run/experiment.py b/run/experiment.py
+index da0e32e..88044f5 100644
+--- a/run/experiment.py
++++ b/run/experiment.py
+@@ -23,7 +23,8 @@ class Experiment(object):
+     INTERRUPTED_DIR = ".interrupted"
+ 
+     def __init__(self, name, scheduler, working_dir, finished_dir,
+-                 proc_entries, executables, tracer_types):
++                 proc_entries, executables, tracer_types, 
++                 run_script, pre_script, post_script, dir_name):
+         '''Run an experiment, optionally wrapped in tracing.'''
+         self.name = name
+         self.scheduler = scheduler
+@@ -34,7 +35,14 @@ class Experiment(object):
+         self.exec_out = None
+         self.exec_err = None
+         self.tracer_types = tracer_types
+-
++        #Aggiunti per un RUN conforme 
++        #pre-post scripting
++        self.run_script = run_script
++        self.pre_script = pre_script
++        self.post_script = post_script
++        self.dir_name = dir_name
++        #----------------------------
++        
+         self.regular_tracers = []
+         self.exact_tracers = []
+ 
+@@ -197,6 +205,10 @@ class Experiment(object):
+ 
+         sched = lu.scheduler()
+         if sched != "Linux":
++            self.log("Waiting 5 seconds to let all timers expire")
++            import time
++            time.sleep(5)
++
+             self.log("Switching back to Linux scheduler")
+             try:
+                 lu.switch_scheduler("Linux")
+@@ -254,7 +266,8 @@ class Experiment(object):
+         exception = None
+         try:
+             self.__setup()
+-
++            #For RUN customization pre-script
++            self.run_script(self.pre_script, self, self.dir_name, self.working_dir)
+             try:
+                 self.__run_tasks()
+                 self.log("Saving results in %s" % self.finished_dir)
+@@ -269,6 +282,8 @@ class Experiment(object):
+         finally:
+             try:
+                 self.__teardown()
++                #For RUN customization post-script
++                self.run_script(self.post_script, self, self.dir_name, self.finished_dir)
+                 self.__to_linux()
+             except Exception as e:
+                 exception = exception or e
+@@ -276,5 +291,5 @@ class Experiment(object):
+                 if exception: raise exception
+ 
+         if succ:
+-            self.__save_results()
++            self.__save_results()            
+             self.log("Experiment done!")
+diff --git a/run_exps.py b/run_exps.py
+index 21666a9..d5802f1 100755
+--- a/run_exps.py
++++ b/run_exps.py
+@@ -216,12 +216,12 @@ def run_script(script_params, exp, exp_dir, out_dir):
+     if type(script_params) != type([]):
+         script_params = [script_params]
+ 
+-    exp.log("Running %s" % script_params.join(" "))
++    exp.log("Running %s" % " ".join(script_params))
+ 
+     script_name = script_params.pop(0)
+     script = com.get_executable(script_name, cwd=exp_dir)
+ 
+-    out  = open('%s/%s-out.txt' % (out_dir, script_name), 'w')
++    out  = open('%s/%s-out.txt' % (out_dir, script_name), 'w+')
+     prog = Executable(script, script_params, cwd=out_dir,
+                       stderr_file=out, stdout_file=out)
+ 
+@@ -287,18 +287,20 @@ def run_experiment(data, start_message, ignore, jabber):
+     procs, execs = load_schedule(data.name, data.sched_file, data.params.duration)
+ 
+     exp = Experiment(data.name, data.params.scheduler, work_dir,
+-                     data.out_dir, procs, execs, data.params.tracers)
++                     data.out_dir, procs, execs, data.params.tracers,
++                     run_script, data.params.pre_script, 
++                     data.params.post_script, dir_name)
+ 
+     exp.log(start_message)
+ 
+     if not ignore:
+         verify_environment(data.params)
+ 
+-    run_script(data.params.pre_script, exp, dir_name, work_dir)
++    #run_script(data.params.pre_script, exp, dir_name, work_dir)
+ 
+     exp.run_exp()
+ 
+-    run_script(data.params.post_script, exp, dir_name, data.out_dir)
++    #run_script(data.params.post_script, exp, dir_name, data.out_dir)
+ 
+     if jabber:
+         jabber.send("Completed '%s'" % data.name)
+@@ -537,11 +539,15 @@ def main():
+       "\n  Failed:\t\t%d" % state_count(ExpState.Failed) +\
+       "\n  Already Done:\t\t%d" % state_count(ExpState.Done) +\
+       "\n  Invalid Environment:\t%d" % state_count(ExpState.Invalid)
+-
++     
+     print(message)
+ 
++    mail_message = message + '\nDetails:'
++    for e in exps:
++        mail_message += '\n  {0}'.format(unicode(e.name))
++        
+     if email:
+-        email.send(message)
++        email.send(mail_message)
+         email.close()
+ 
+     if succ:
+diff --git a/run_reductor.py b/run_reductor.py
+new file mode 100644
+index 0000000..fd54d68
+--- /dev/null
++++ b/run_reductor.py
+@@ -0,0 +1,350 @@
++#!/usr/bin/env python
++'''
++Created on 25/lug/2013
++
++@author: Davide Compagnin
++'''
++
++import sys
++from decimal import Decimal
++import json
++import math
++import re
++import os
++from fractions import gcd
++from optparse import OptionParser
++
++DEFAULTS = {'cpus'        : '8',
++            'prog'        : 'rtspin',
++            'heuristic'   : 'worst-fit',
++            'in'          : 'sched.py',
++            'out'         : 'tree.json'
++}
++
++def ignore(_):
++    pass
++
++def parse_args():
++    parser = OptionParser("usage: %prog [options]")
++
++    parser.add_option('-o', '--out-file', dest='out_file',
++                      help='file for data output',
++                      default=("%s/%s"% (os.getcwd(), DEFAULTS['out'])))
++    parser.add_option('-i', '--in-file', dest='in_file',
++                      help='file for data input',
++                      default=("%s/%s"% (os.getcwd(), DEFAULTS['in'])))
++    parser.add_option('-e', '--heuristic', dest='heuristic',
++                      help='heuristic',
++                      default=("%s"% DEFAULTS['heuristic']))
++    parser.add_option('-p', '--processors', dest='cpus',
++                      help='number of processors',
++                      default=(DEFAULTS['cpus']))
++
++    return parser.parse_args()
++
++class PeriodicTask(object):
++    def __init__(self, exec_cost, period, id=None):
++        self.cost = exec_cost
++        self.period = period
++        self.id = id
++        
++    def utilization(self):
++        return Decimal(self.cost) / Decimal(self.period)
++
++class FixedRateTask(PeriodicTask):
++    
++    def __init__(self, exec_cost, period, id=None, server=None, level=-1):
++        super(FixedRateTask,self).__init__(exec_cost, period, id)
++        self.server = server
++        self.level = level
++        self.children = []
++        self.parent = None
++        
++    def dual_utilization(self):
++        return Decimal(1) - self.utilization()
++    
++    def get_children(self):
++        return self.children
++
++def aggregate(task_list, server, level):
++    exec_cost = 0
++    period = 1
++    for t in task_list:
++        exec_cost = (exec_cost * t.period) + (period * t.cost)
++        period = period * t.period
++    task_gcd = gcd(exec_cost, period)
++    exec_cost /= task_gcd
++    period /= task_gcd
++    new_task = FixedRateTask(exec_cost, #period - exec_cost, 
++                             period,
++                             server, 
++                             None, 
++                             level)
++    for t in task_list:
++        t.parent = new_task
++        t.server = server
++        new_task.children.append(t)
++    return new_task
++
++def dual(taskset):
++    for t in taskset:
++        t.cost = t.period - t.cost
++        
++def worst_fit(items, bins, capacity=Decimal(1), weight=lambda x: x.utilization(), misfit=ignore, empty_bin=list):
++    sets = [empty_bin() for _ in xrange(0, bins)]
++    sums = [Decimal(0) for _ in xrange(0, bins)]
++    for x in items:
++        c = weight(x)
++        # pick the bin where the item will leave the most space
++        # after placing it, aka the bin with the least sum
++        candidates = [s for s in sums if s + c <= capacity]
++        if candidates:
++            # fits somewhere
++            i = sums.index(min(candidates))
++            sets[i] += [x]
++            sums[i] += c
++        else:
++            misfit(x)
++    return sets
++
++def best_fit(items, bins, capacity=Decimal(1), weight=lambda x: x.utilization(), misfit=ignore, empty_bin=list):
++    sets = [empty_bin()  for _ in xrange(0, bins)]
++    sums = [Decimal(0) for _ in xrange(0, bins)]
++    for x in items:
++        c = weight(x)
++        # find the first bin that is sufficiently large
++        idxs = range(0, bins)
++        idxs.sort(key=lambda i: sums[i], reverse=True)
++        for i in idxs:
++            if sums[i] + c <= capacity:
++                sets[i] += [x]
++                sums[i] += c
++                break
++        else:
++            misfit(x)
++    return sets
++
++def first_fit(items, bins, capacity=Decimal(1), weight=lambda x: x.utilization(), misfit=ignore,
++              empty_bin=list):
++    sets = [empty_bin() for _ in xrange(0, bins)]
++    sums = [Decimal(0) for _ in xrange(0, bins)]
++    for x in items:
++        c = weight(x)
++        for i in xrange(0, bins):
++            if sums[i] + c <= capacity:
++                sets[i] += [x]
++                sums[i] += c
++                break
++        else:
++            misfit(x)
++
++    return sets
++
++def next_fit(items, bins, capacity=Decimal(1), weight=lambda x: x.utilization(), misfit=ignore,
++             empty_bin=list):
++    sets = [empty_bin() for _ in xrange(0, bins)]
++    cur  = 0
++    s  = Decimal(0)
++    for x in items:
++        c = weight(x)
++        while s + c > capacity:
++            s = Decimal(0)
++            cur += 1
++            if cur == bins:
++                misfit(x)
++                return sets
++        sets[cur] += [x]
++        s += c
++    return sets
++
++def distribuite_slack(ts, slack):
++    ts.sort(key=lambda x: x.utilization(), reverse=True)
++    i = 0
++    unused_capacity = slack
++    while (unused_capacity > Decimal(0)) and (i < len(ts) + 100):
++        t = ts[i]
++        if (t.dual_utilization() <= unused_capacity):
++            unused_capacity -= t.dual_utilization() 
++            t.cost = t.period
++        else:
++            tmp_util = t.utilization()
++            t.cost += int(unused_capacity * Decimal(t.period))
++            unused_capacity -= (t.utilization() - tmp_util)
++        i += 1
++        
++    if (unused_capacity > Decimal(0)):
++        raise Exception('Still capacity unused: ' + str(unused_capacity))
++
++def convert_data(data):
++    '''Convert a non-python schedule file into the python format'''
++    regex = re.compile(
++        r"(?P<PROC>^"
++            r"(?P<HEADER>/proc/[\w\-]+?/)?"
++            r"(?P<ENTRY>[\w\-\/]+)"
++              r"\s*{\s*(?P<CONTENT>.*?)\s*?}$)|"
++        r"(?P<TASK>^"
++            r"(?:(?P<PROG>[^\d\-\s][\w\.]*?) )?\s*"
++            r"(?P<ARGS>[\w\-_\d\. \=]+)\s*$)",
++        re.S|re.I|re.M)
++
++    procs = []
++    tasks = []
++
++    for match in regex.finditer(data):
++        if match.group("PROC"):
++            header = match.group("HEADER") or "/proc/litmus/"
++            loc  = "{}{}".format(header, match.group("ENTRY"))
++            proc = (loc, match.group("CONTENT"))
++            procs.append(proc)
++        else:
++            prog = match.group("PROG") or DEFAULTS['prog']
++            spin = (prog, match.group("ARGS"))
++            tasks.append(spin)
++
++    return {'proc' : procs, 'task' : tasks}
++
++def serialize(task):
++    obj = {
++        'id': task.id,
++        'cost': task.cost,
++        'period': task.period,
++        'level' : task.level,
++        'children': []
++    }
++    for ch in task.get_children():
++        obj['children'].append(serialize(ch))
++        
++    return obj
++
++HEURISTICS = {
++              'worst-fit' : worst_fit,
++              'best-fit'  : best_fit,
++              'next-fit'  : next_fit,
++              'first-fit' : first_fit,
++}
++
++class Reductor(object):
++    def __init__(self, cpus=8, heuristic='worst-fit', in_file='sched.py', out_file='tree.json'):
++        self.ts = []
++        self.cpus = cpus
++        if heuristic in HEURISTICS:
++            self.heuristic = HEURISTICS[heuristic]
++        self.in_file = in_file
++        self.out_file = out_file
++        self.misfits = 0
++        self.servers = 0
++        self.unit_server = None
++        self.level = 0
++        
++    def _misfit(self, x):
++        #self.misfit += x.dual_utilization()
++        self.misfits += 1
++    
++    def reduce(self):
++        #parsing schedule.py file
++        with open(self.in_file, 'r') as f:
++            data = f.read().strip()
++        
++        try:
++            schedule = eval(data)
++        except:
++            schedule = convert_data(data)
++        
++        for task_conf in schedule['task']:
++            
++            (task, args) = (task_conf[0], task_conf[1])
++            real_args = args.split()
++            #Get two last arguments as cost and period respectively
++            index = len(real_args) - 2
++            self.ts.append(FixedRateTask(int(real_args[index + 0]), int(real_args[index + 1])))
++        
++        n_tasks = len(self.ts)
++        #n_tasks may be less than cpus
++        if (n_tasks < self.cpus):
++            print 'Info: cpus has changed from {0} to {1}'.format(unicode(self.cpus),unicode(n_tasks))
++            self.cpus = n_tasks
++        
++        tot_util = sum([t.utilization() for t in self.ts])
++        print 'Info: total utilization {0}'.format(tot_util)
++        
++        unused_capacity = Decimal(self.cpus) - tot_util
++        if (unused_capacity < Decimal(0)):
++            print 'Error: unfeasible taskset'.format(tot_util)
++            raise Exception('Unfeasible Taskset')
++        
++        new_ts = self._pack(self.ts, self.cpus)
++        new_ts.sort(key=lambda x: x.utilization(), reverse=True)
++        distribuite_slack(new_ts, unused_capacity)
++        dual(new_ts)
++        self.level = 1
++        unit_server = self._reduce(new_ts)
++        
++        if (len(unit_server) != 1):
++            print 'Error: not correctly reduced'.format(tot_util)
++            raise Exception('not correctly reduced')
++    
++        if (unit_server[0].utilization() != Decimal(0) and unit_server[0].utilization() != Decimal(1)):
++            print 'Error: not correctly reduced'.format(tot_util)
++            raise Exception('not correctly reduced')
++        
++        self.unit_server = unit_server[0]
++        print 'Info: tree level {0}'.format(unicode(self.unit_server.level - self.unit_server.utilization()))
++        
++    def serialize(self):
++        if (self.unit_server != None):
++            serialized = serialize(self.unit_server)
++            with open(self.out_file, 'wa') as f:
++                json.dump(serialized, f, indent=4)
++        else:
++            print 'Error: no unit-server'
++        
++    def _pack(self, taskset, cpus):
++        self.misfits = 0
++        n_bins = cpus
++        
++        taskset.sort(key=lambda x: x.utilization(), reverse=True)
++        
++        bins = self.heuristic(taskset, 
++                          n_bins, 
++                          Decimal(1), 
++                          lambda x: x.utilization(), 
++                          self._misfit)
++        while (self.misfits > 0):
++            #n_bins += math.ceil(self.misfit)
++            n_bins += 1 #self.misfit
++            self.misfits = 0
++            bins = self.heuristic(taskset, 
++                              n_bins, 
++                              Decimal(1), 
++                              lambda x: x.utilization(), 
++                              self._misfit)    
++        servers = []
++        for item in bins:
++            tmp_server = aggregate(item, self.servers, self.level)
++            servers.append(tmp_server)
++            self.servers += 1
++        
++        self.misfits = 0
++        return servers
++    
++    def _reduce(self, taskset):
++        utilization = sum([t.utilization() for t in taskset])
++        new_taskset = self._pack(taskset, int(math.ceil(utilization)))
++        dual(new_taskset)
++        if len(new_taskset) == 1:
++        #if (utilization == Decimal(1) or utilization == Decimal(0)):
++            return new_taskset
++        else:
++            self.level += 1
++            return self._reduce(new_taskset)
++        
++def main():
++    opts, args = parse_args()
++    
++    reductor = Reductor(int(opts.cpus.strip()), opts.heuristic, opts.in_file, opts.out_file)
++    
++    reductor.reduce()
++    reductor.serialize()
++    
++if __name__ == '__main__':
++    main()
+\ No newline at end of file
+diff --git a/schedRUN/__init__.py b/schedRUN/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/schedRUN/batchExps.py b/schedRUN/batchExps.py
+new file mode 100644
+index 0000000..e76351d
+--- /dev/null
++++ b/schedRUN/batchExps.py
+@@ -0,0 +1,73 @@
++#!/usr/bin/env python
++
++import schedRUN.expconfig as cfg
++import schedRUN.model.SystemResourceGenerator as generator
++import schedRUN.schedulability.schedulabilityRUN as mySched
++
++#x = utilLimit, y=resDistr
++def saveFile(fileName, Data, resN, reqN, resW):
++  out_file = open(fileName,"w")
++
++  out_file.write("# utilLimit, resDistr, success\n")
++
++  for k1 in cfg.UL:
++    for k2 in cfg.RD:
++      out_file.write(str(k1)+" "+str(k2)+" "+str(Data[k1][k2][resN][reqN][resW])+"\n")
++    out_file.write("\n")
++
++  out_file.close()
++
++
++def main():
++
++#(self, periodDistr, utilDistr, resDistr, resWeight, resNumber, utilLimit, cpuLimit)
++
++  schedResultRUN = {}
++  surplusUtilRUN = {}
++
++  for utilLimit in cfg.UL:
++    schedResultRUN[utilLimit] = {}
++    surplusUtilRUN[utilLimit] = {}
++
++    for resDistr in cfg.RD:
++      schedResultRUN[utilLimit][resDistr] = {}
++      surplusUtilRUN[utilLimit][resDistr] = {}
++
++      for resNumb in cfg.RN:
++        schedResultRUN[utilLimit][resDistr][resNumb] = {}
++        surplusUtilRUN[utilLimit][resDistr][resNumb] = {}
++
++        for reqNumb in cfg.QN :
++          schedResultRUN[utilLimit][resDistr][resNumb][reqNumb] = {}
++          surplusUtilRUN[utilLimit][resDistr][resNumb][reqNumb] = {}
++
++          for resWeight in cfg.RW:
++
++            taskSetGenerator = generator.SystemResourcesGenerator(
++              cfg.NAMED_PERIODS['uni-moderate'],
++              cfg.NAMED_UTILIZATIONS['uni-light'],
++              resDistr, resWeight, resNumb, reqNmbr, utilLimit, cfg.cpuLimit)
++
++            averageSurplusRUN = []
++            counterRUN = 0
++
++            for i in range(0, cfg.NumExps):
++              taskSet = taskSetGenerator.generateTaskSetLinear()
++              initialUtil = sum([float(x.cost)/float(x.period) for x in taskSet])
++              mySchedRUN = mySched.SchedulabilityTestRUN(range(0, resNumb), taskSet)
++
++              if mySchedRUN.isSchedulable(cfg.cpuLimit) :
++                counterRUN += 1
++                averageSurplusRUN.append(100.0*(mySchedRUN.getFinalUtilization() - initialUtil)/initialUtil)
++
++            schedResultRUN[utilLimit][resDistr][resNumb][reqNumb][resWeight] = float(counterRUN)/float(cfg.NumExps)
++            surplusUtilRUN[utilLimit][resDistr][resNumb][reqNumb][resWeight] = sum(averageSurplusRUN)/float(max(len(averageSurplusRUN), 1))
++
++  for resN in cfg.RN:
++    for reqN in cfg.QN:
++      for resW in cfg.RW:
++        saveFile("/home/luca/exps/output/RUNsched:"+str(resN)+":"+str(reqN)+":"+str(resW), schedResultRUN, resN, reqN, resW)
++        saveFile("/home/luca/exps/output/RUNsurpl:"+str(resN)+":"+str(reqN)+":"+str(resW), surplusUtilRUN, resN, reqN, resW)
++
++if __name__ == '__main__':
++  main()
+\ No newline at end of file
+diff --git a/schedRUN/expconfig.py b/schedRUN/expconfig.py
+new file mode 100644
+index 0000000..5b1bcd5
+--- /dev/null
++++ b/schedRUN/expconfig.py
+@@ -0,0 +1,67 @@
++import numpy as np
++import random
++import model.rv as rv
++
++NumExps = 1
++cpuLimit  = 8
++
++minUtilLimit = 5.0
++maxUtilLimit = cpuLimit
++deltaUtilLimit = 0.1
++
++minResDistr = 0.1
++maxResDistr = 0.7
++deltaResDistr = 0.025
++
++minResWeight = 0.05
++maxResWeight = 0.25
++deltaResWeight = 0.025
++
++minResNumb = 1
++maxResNumb = 20
++deltaResNumb = 2
++
++minReqNumb = 1
++maxReqNumb = 10
++deltaReqNumb = 1
++
++#UL = [7.5]
++#RD = [0.3]
++#RW = [0.05]
++#RN = [5]
++
++UL = np.arange(minUtilLimit, maxUtilLimit+deltaUtilLimit, deltaUtilLimit)
++RD = np.arange(minResDistr,  maxResDistr +deltaResDistr,  deltaResDistr)
++#RW = np.arange(minResWeight, maxResWeight+deltaRerWeight, deltaResWeight)
++#RN = np.arange(minResNumb,   maxResNumb  +deltaRedNumb,   deltaResNumb)
++
++RW = [0.05, 0.15, 0.25]
++RN = [5, 12, 20]
++
++NAMED_PERIODS = {
++    'harmonic'      : rv.uniform_choice([25, 50, 100, 200]),
++    'uni-short'     : rv.uniform_int( 3,  33),
++    'uni-moderate'  : rv.uniform_int(10, 100),
++    'uni-long'      : rv.uniform_int(50, 250),
++}
++
++NAMED_UTILIZATIONS = {
++    'uni-very-light': rv.uniform(0.0001, 0.001),
++    'uni-light'     : rv.uniform(0.001, 0.1),
++    'uni-medium'    : rv.uniform(  0.1, 0.4),
++    'uni-heavy'     : rv.uniform(  0.5, 0.9),
++    'uni-mixed'     : rv.uniform(0.001, .4),
++
++    'exp-light'     : rv.exponential(0, 1, 0.10),
++    'exp-medium'    : rv.exponential(0, 1, 0.25),
++    'exp-heavy'     : rv.exponential(0, 1, 0.50),
++
++    'bimo-light'    : rv.multimodal([(rv.uniform(0.001, 0.5), 8),
++                                     (rv.uniform(  0.5, 0.9), 1)]),
++    'bimo-medium'   : rv.multimodal([(rv.uniform(0.001, 0.5), 6),
++                                     (rv.uniform(  0.5, 0.9), 3)]),
++    'bimo-heavy'    : rv.multimodal([(rv.uniform(0.001, 0.5), 4),
++                                     (rv.uniform(  0.5, 0.9), 5)]),
++    'bimo-hheavy'   : rv.multimodal([(rv.uniform(0.1, 0.5), 3),
++                                     (rv.uniform(  0.5, 0.9), 6)]),
++}
+diff --git a/schedRUN/manager/ServerResourceManager.py b/schedRUN/manager/ServerResourceManager.py
+new file mode 100644
+index 0000000..c34f33f
+--- /dev/null
++++ b/schedRUN/manager/ServerResourceManager.py
+@@ -0,0 +1,107 @@
++import schedRUN.model.ServerResourceInterface as sri
++from schedRUN.model.SchedulingException import Unschedulable
++
++from fractions import Fraction
++
++''' determine a partitioning of the taskset in which each partition contains tasks that share the same resources.
++    Return the partitioning as an associative array.
++    RETURN:
++    result[incremental_index] = {
++      "resIds" = list of resources used by tasks;
++      "tasks" = list of tasks that use the resources} '''
++def findStronglyConnectedSets(resources, taskset):
++  groups = {}
++  groupIndex = 0
++  alreadyConsidered = []
++  for r in resources :
++    if r in alreadyConsidered :
++      continue
++
++    tempIds = set([r])
++    tempTsk = set()
++    idx = 0
++    while idx < len(taskset) :
++      t = taskset[idx]
++      if t in tempTsk :
++        idx += 1
++        continue
++      if len( tempIds.intersection(set(t.resmodel)) ) > 0 :
++        tempTsk = tempTsk.union([t])
++        if len( tempIds.union(set(t.resmodel)) ) > len(tempIds) :
++          idx = -1
++          tempIds = tempIds.union(set(t.resmodel.keys()))
++      idx += 1
++    alreadyConsidered.extend(tempIds)
++    groups[groupIndex] = {"resIds": list(tempIds), "tasks": list(tempTsk)}
++    groupIndex += 1
++  return groups
++
++''' create the servers for the given tasks which use the same resources.
++    RETURN:
++      1) the list of servers containing the tasks. The servers contain the blocking term and the tasks
++         store the incremented WCET
++      2) None if it was not possible to create the servers, caused by the Unschedulable exception '''
++def createServers(resources, tasks):
++  servers = []
++  try :
++    ''' sort the tasks hoping that it will help in reducing the number of servers '''
++    tasks = sorted(tasks,
++                   key=lambda x: max(map(lambda y: x.resmodel[y].max_write_length, x.resmodel)))
++    ''' create the first server with all the tasks '''
++    servers.append(sri.ServerResourceInterface(resources, tasks))
++    index = 0
++    while index < len(servers) :
++      somethingChanged = False
++      ''' manage the status of the server considering the actual distribution of tasks in the other
++          servers. This is necessary to increment the WCET of tasks and to compute the blocking term '''
++      servers[index].updateServerStatus(servers)
++      ''' remove tasks till the rate of the considered server is <= 1.0 '''
++      while servers[index].getUtilization() > Fraction(1,1) :
++        ''' if it is necessary, create a new server for the removed tasks '''
++        if index == (len(servers) - 1) :
++          servers.append(sri.ServerResourceInterface(resources, []))
++        ''' pick a task in the considered server and put it in the next server in line '''
++        servers[index + 1].addTask(servers[index].removeTask())
++        ''' something has changed, update the status of the considered server '''
++        servers[index].updateServerStatus(servers)
++        somethingChanged = True
++      ''' if something has changed, it is necessary to reconsider its consequences on the previous servers '''
++      if somethingChanged :
++        index = 0
++      else :
++        index += 1
++
++  except Unschedulable, e :
++    return None
++
++  return servers
++
++''' manage the collaborative tasks supplied. Tries to create the servers that will contain the collaborative
++    tasks and that account for the blocking term. Tells apart collaborative and not collaborative tasks.
++    RETURN:
++       '''
++def manageResources(resources, taskset):
++
++  ''' groups together collaborative tasks '''
++  groups = findStronglyConnectedSets(resources, taskset);
++
++  ''' create the servers that comply with RUNRSP for each group of collaborative tasks '''
++  for index in groups :
++    groups[index]["servers"] = createServers(groups[index]["resIds"], groups[index]["tasks"])
++    ''' if some group cannot generate servers it means that the taskset is unschedulable. Abort '''
++    if groups[index]["servers"] == None :
++      return None
++
++  ''' create a group for independent tasks '''
++  independentTasks = []
++  for t in taskset :
++    if len(t.resmodel) == 0 :
++      independentTasks.append(t)
++  if (len(independentTasks) != 0) :
++    index = len(groups)
++    groups[index] = {}
++    groups[index]["resIds"] = []
++    groups[index]["servers"] = []
++    groups[index]["tasks"] = independentTasks
++
++  return groups
+\ No newline at end of file
+diff --git a/schedRUN/manager/__init__.py b/schedRUN/manager/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/schedRUN/model/ResourceDistributor.py b/schedRUN/model/ResourceDistributor.py
+new file mode 100644
+index 0000000..ce8b1e3
+--- /dev/null
++++ b/schedRUN/model/ResourceDistributor.py
+@@ -0,0 +1,142 @@
++import random
++
++''' Distribute resources to tasks linearly. Each task uses one resource.
++    resRange       = list of IDs of resources that can be used.
++    resWeight      = percentage of the min WCET of tasks (using the resource)
++        that a task spends using the resource. If it is a list of a single
++        element, then every resource will use the same value. Otherwise the
++        list must contain one element for every resource.
++    resRequest     = max number of requests that a task can perform on a given
++        resource. If it is a list of a single element, then every task will
++        use the same value. Otherwise the list must contain one element for
++        every resource (every task using the resource use this value).
++    fixedRequests  = if True then each task performs resRequests on each
++        resource. Otherwise each task performs random[1, resRequests].
++    ts             = set of tasks that must use the resources.
++
++    Example =
++      import ResourceDistribution as rd
++      rd.distributeLinear(
++        [0,    1,    2,    3,    4,    5,    6,    7],
++        [0.05, 0.03, 0.02, 0.06, 0.05, 0.04, 0.05, 0.03],
++        [5,    2,    3,    1,    3,    4,    2,    3],
++        False,
++        ts)
++'''
++def distributeLinear(resRange, resWeight, resRequest, fixedRequests, ts) :
++
++  if len(ts) < len(resRange) :
++    resRange = range(0, len(ts))
++  a = len(ts)/len(resRange)
++  b = len(ts)%a
++  index = 0
++
++  "STEP1) initialize the bins: one per resource."
++  bins = {}
++  for r in resRange :
++    bins[r] = []
++    findex = index+a
++    if b > 0 :
++      findex +=1
++      b -= 1
++    bins[r].extend(ts[index:findex])
++    index = findex
++  "STEP2) determine which task uses which resource: distribute the tasks to the bins linearly."
++  '''
++  index = 0
++  for t in ts :
++    bins[resRange[index]].append(t)
++    index = (index+1)%len(resRange)
++  '''
++  random.seed()
++  index = 0
++  for r in resRange :
++    "STEP3) parsing initial information. Determining the size of the requests per resource."
++    partialCost = 0.0
++    if len(resWeight) == 1 :
++      partialCost = resWeight[0]
++    elif len(resWeight) == len(resRange) :
++      partialCost = resWeight[index]
++    else :
++      raise ValueError("DistributeLinear: E1) incompatible dimensions.")
++    resCost = max(1, int(min([1000000]+[x.cost for x in bins[r]])*partialCost))
++
++    "STEP4) parsing initial information. Determining the maximum number of requests per task."
++    numreq = 0
++    if len(resRequest) == 1 :
++      numreq = resRequest[0]
++    elif len(resRequest) == len(resRange) :
++      numreq = resRequest[index]
++    else :
++      raise ValueError("DistributeLinear: E2) incompatible dimensions.")
++
++    for t in bins[r] :
++
++      "STEP5) insert variability in the number of requests if requested."
++      if not fixedRequests :
++        numreq = random.randint(1, numreq)
++
++      "STEP6) let the task perform the requests."
++      for _ in range(0, numreq) :
++        t.resmodel[r].add_write_request(resCost)
++
++    index = index + 1
++
++  return
++
++''' Randomly distribute resources to tasks.
++    resRange = IDs of resources that can be used.
++    resWeight = percentage of the minimum WCET of tasks that a task
++                spends using the resource.
++    maxResPerTask = maximum number of different resources that each task can use.
++    maxResRequests = maximum number of requests that each task can perform on a
++                given resource.
++    fixedRequests = if True then each task performs maxResRequests on each
++                resource. Otherwise each task performs random[1, maxResRequests].
++    ts = set of tasks that must use the resources.
++
++    Example =
++      import ResourceDistribution as rd
++      rd.distributeRandom(range(0,4), [0.05], 2, 3, True, ts[:len(ts)/2])
++      rd.distributeRandom(range(4,8), [0.05], 2, 3, True, ts[len(ts)/2:])
++'''
++def distributeRandom(resRange, resWeight, maxResPerTask, maxResRequests, fixedRequests, ts) :
++  "STEP1) initialize the bins: one per resource."
++  bins = {}
++  for r in resRange :
++    bins[r] = []
++
++  "STEP2) determine which task uses which resource."
++  for t in ts :
++    resCount = random.randint(1, maxResPerTask)
++    usedRes = random.sample(resRange, resCount)
++    for r in usedRes :
++      bins[r].append(t)
++
++  index = 0
++  for r in resRange :
++    "STEP3) determine the worst case for the resource."
++    partialCost = 0.0
++    if len(resWeight) == 1 :
++      partialCost = resWeight[0]
++    elif len(resWeight) == len(resRange) :
++      partialCost = resWeight[index]
++    else :
++      raise ValueError("DistributeRandom: E1) incompatible dimensions.")
++
++    resCost = max(1, int(min([1000000]+[x.cost for x in bins[r]])*partialCost))
++
++    for t in bins[r] :
++      "STEP4) determine the number of requests each task performs."
++      numreq = maxResRequests
++      if not fixedRequests :
++        numreq = random.randint(1, maxResRequests)
++
++      "STEP5) tell the task to perform its requests."
++      for _ in range(0, numreq) :
++        t.resmodel[r].add_write_request(resCost)
++
++    index = index + 1
++
++  return
++
+diff --git a/schedRUN/model/SchedulingException.py b/schedRUN/model/SchedulingException.py
+new file mode 100644
+index 0000000..1bd0773
+--- /dev/null
++++ b/schedRUN/model/SchedulingException.py
+@@ -0,0 +1,5 @@
++class Unschedulable(Exception):
++  def __init__(self, value):
++    self.value = value
++  def __str__(self):
++    return repr(self.value)
+\ No newline at end of file
+diff --git a/schedRUN/model/ServerResourceInterface.py b/schedRUN/model/ServerResourceInterface.py
+new file mode 100644
+index 0000000..ffec46b
+--- /dev/null
++++ b/schedRUN/model/ServerResourceInterface.py
+@@ -0,0 +1,147 @@
++from fractions import Fraction
++
++import schedcat.generator.tasks as tasks
++import schedcat.model.resources as resources
++
++from schedRUN.model.SchedulingException import Unschedulable
++
++''' Class representing a possible server for RUN. Used to estimate the blocking
++    terms for RUNRSP.'''
++class ServerResourceInterface(object):
++
++  def __init__(self, resIds, tasksList):
++    self._resIds = resIds
++    self._tasks = tasksList
++    self._innerSurplus = Fraction()
++    return
++
++  ''' Add a list of tasks in the task subset of the server. '''
++  def addTasks(self, newTasks):
++    self._tasks.extend(newTasks)
++    return
++
++  ''' Add a task in the task subset of the server. '''
++  def addTask(self, newTask):
++    self._tasks.append(newTask)
++    return
++
++  ''' Get the rate of the server. It comprises both the rate of its children and the
++      augmented cost due to the blocking term that can be suffered by them. '''
++  def getUtilization(self):
++    return sum([Fraction(t.augmentedCost, t.period) for t in self._tasks]) + self._innerSurplus
++
++  ''' Remove the first task in the task subset of the server '''
++  def removeTask(self):
++    if len(self._tasks) == 1 :
++      raise Unschedulable("[ServerResourceInterface:removeTask] Server %d has no more tasks to remove."%(self._id))
++    return self._tasks.pop(0)
++
++  ''' Find the max request length for resource r that the tasks inside the
++      server can perform. If t is defined its requests are not considered. '''
++  def _getMaxRequestExcept(self, r, t) :
++    tasksToConsider = [x for x in self._tasks if r in x.resmodel and x is not t]
++    if len(tasksToConsider) == 0 :
++      return 0
++    return max(map(lambda x: x.resmodel[r].max_write_length, tasksToConsider))
++
++  ''' Return the max interference that the server produces for other servers
++      when performing a request on resource r. '''
++  def getExternalBlocking(self, r) :
++    return self._getMaxRequestExcept(r, None)
++
++  ''' Return the max interference that task t suffers from the tasks in
++      the same server for any resource that these tasks use. '''
++  def getInternalBlocking(self, t, outerBlocking) :
++    if t not in self._tasks :
++      raise ValueError("[ServerResourceInterface:getInternalBlocking] Task %d not in server %d!"%(t.id, self._id))
++
++    allRequests = [0]
++    for r in self._resIds :
++      temp = self._getMaxRequestExcept(r, t)
++      if temp > 0 :
++        allRequests.append(temp + outerBlocking[r])
++    return max(allRequests)
++
++  ''' Update the status of the server:
++      1) update the augmented cost of its children given the global distribution of the tasks in
++         the up-to-date list of all servers.
++      2) update the blocking term given the distribution of the tasks in all servers '''
++  def updateServerStatus(self, allServers):
++    otherServers = [x for x in allServers if x != self]
++    ''' externalBlocking(resource_i) = length of the FIFO queue due to other servers '''
++    externalBlocking = {}
++    for r in self._resIds :
++      externalBlocking[r] = sum([x.getExternalBlocking(r) for x in otherServers])
++
++    maxSurplus = Fraction()
++    for t in self._tasks :
++      taskCost = t.cost
++      for r in t.resmodel :
++        ''' increment the cost of requests because of parallelism '''
++        taskCost += externalBlocking[r]*t.resmodel[r].max_writes
++        ''' compute the increment on the server due to blocked task '''
++        maxSurplus = max(maxSurplus, Fraction(self.getInternalBlocking(t, externalBlocking), t.period))
++
++      t.augmentedCost = taskCost
++      if taskCost > t.period :
++        raise Unschedulable("Task%d(%d,%d) has effective c=%d"%(t.id, t.cost, t.period, t.augmentedCost))
++    self._innerSurplus = maxSurplus
++    return
++
++  ''' String representation the information stored inside the server '''
++  def toString(self) :
++    iniUtil=Fraction()
++    finUtil=Fraction()
++    formatRes="Resources:"
++    formatTsk="Task{:<4d}:   "
++    result = ""
++    for r in self._resIds:
++      formatRes += "{:^8d} ".format(r)
++      formatTsk += "{:>3d}({:1d}) "
++    formatTsk += " :: {:>4d}({:>4d})/{:>4d} -> {:>7f}/{:>7f}"
++    for t in self._tasks :
++      val = []
++      val.append(t.id)
++      for r in self._resIds :
++        if r in t.resmodel :
++          val.append(t.resmodel[r].max_write_length)
++          val.append(t.resmodel[r].max_writes)
++        else :
++          val.append(0)
++          val.append(0)
++      val.append(t.cost)
++      val.append(t.augmentedCost)
++      val.append(t.period)
++      val.append(float(t.cost)/float(t.period))
++      val.append(float(t.augmentedCost)/float(t.period))
++      result += formatTsk.format(*val)
++      result += "\n"
++      iniUtil += Fraction(t.cost, t.period)
++      finUtil += Fraction(t.augmentedCost,t.period)
++    result = "Server\n\tInitialUtil=%f\n\tFinalUtil  =%f\n\tsurplus = %g/%g\n"%(float(iniUtil),float(finUtil+self._innerSurplus),self._innerSurplus.numerator,self._innerSurplus.denominator) + formatRes + "\n" + result
++    return result
++
++  @staticmethod
++  def worstFitAutoBins(items, capacity=Fraction(1,1), weight=lambda x: Fraction(x.cost,x.period), empty_bin=list):
++    sets = []
++    sums = []
++    for x in items:
++      c = weight(x)
++      # pick the bin where the item will leave the most space
++      # after placing it, aka the bin with the least sum
++      candidates = [s for s in sums if s + c <= capacity]
++      index = -1
++      if candidates :
++        # fits somewhere
++        index = sums.index(min(candidates))
++      else :
++        sets.append(empty_bin())
++        sums.append(Fraction())
++        index = len(sets)-1
++
++      if index == -1 :
++        print "ServerResourceInterface: SOME ERROR WHILE BIN PACKING"
++      sets[index] += [x]
++      sums[index] += c
++
++    return sets
+\ No newline at end of file
+diff --git a/schedRUN/model/SystemResourceGenerator.py b/schedRUN/model/SystemResourceGenerator.py
+new file mode 100644
+index 0000000..287ef17
+--- /dev/null
++++ b/schedRUN/model/SystemResourceGenerator.py
+@@ -0,0 +1,77 @@
++import schedcat.generator.tasks as tasks
++import schedcat.model.resources as resources
++
++import schedRUN.model.ResourceDistributor as rd
++
++SCALING_PARAM = 1
++
++class SystemResourcesGenerator(object):
++
++  def __init__(self, periodDistr, utilDistr, resDistr, resWeight, resNumber, reqNumber, utilLimit, cpuLimit):
++    ''' periodDistr and utilDistr functions used to generate independent task set.
++        resDistr:  real number in [0, 1], determines the percentage of tasks that use the resource.
++        resWeight: real number in (0, 1), determines the time spent in using a resource by a task.
++        resNumber: integer representing the number of resources used by the system.
++        reqNumber: integer representing the number of requests made towards a resource.
++        utilLimit: limit for the total utilization of the system.
++        cpuLimit:  number of CPU available to schedule the system
++        Resources are distributed sequentially to the tasks until the limit of resDistr is reached. '''
++    self._tg = tasks.TaskGenerator(periodDistr, utilDistr)
++    self._rd = resDistr
++    self._rw = resWeight
++    self._rn = resNumber
++    self._qn = reqNumber
++    self._ul = utilLimit
++    self._cl = cpuLimit
++
++    # temporary data structures for support:
++    # 1) the task set
++    # 2) the servers
++    self._ts = []
++    self._rs = {}
++
++  def generateTaskSetBase(self):
++    " let's clear previous data "
++    self._rs = {}
++    self._ts = []
++    " create a task set with the specified utilization "
++    self._ts = self._tg.make_task_set(max_util = self._ul, squeeze=True)
++    self._ts = [t for t in self._ts if t.cost != 0]
++    " scale the parameters (otherwise for low percentage we obtain always 1) "
++    for i in range(0, len(self._ts)):
++      self._ts[i].id = i
++      self._ts[i].cost *= SCALING_PARAM
++      self._ts[i].period *= SCALING_PARAM
++    " initialize the resources in the model "
++    resources.initialize_resource_model(self._ts)
++
++
++  def generateTaskSetLinear(self, fixedRequests = True):
++    self.generateTaskSetBase()
++    numRequesters = int(round(len(self._ts)*self._rd))
++
++    #self._ts.sort(key=lambda x: float(x.cost)/float(x.period), reverse=True)
++    self._ts.sort(key=lambda x: x.cost, reverse=True)
++
++    rd.distributeLinear(
++      range(0, self._rn),       # number of resources
++      [self._rw],               # weight of resources
++      [self._qn],               # number of requests per resource
++      fixedRequests,            # whether the task resources randomly or always _qn times
++      self._ts[:numRequesters]) # number of tasks using the resources
++
++    return self._ts
++
++  def generateTaskSetRandom(self, maxResPerTask = 1, fixedRequests = True):
++    self.generateTaskSetBase()
++    numRequesters = int(round(len(self._ts)*self._rd))
++
++    rd.distributeRandom(
++      range(0,self._rn),        # number of resources
++      [self._rw],               # weight of resources
++      maxResPerTask,            # max number of resources used per task
++      self._qn,                 # number of requests per resource
++      fixedRequests,            # whether the task resources randomly or always _qn times
++      self._ts[:numRequesters]) # tasks using resources
++
++    return self._ts
+diff --git a/schedRUN/model/__init__.py b/schedRUN/model/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/schedRUN/model/rv.py b/schedRUN/model/rv.py
+new file mode 100644
+index 0000000..3bd7355
+--- /dev/null
++++ b/schedRUN/model/rv.py
+@@ -0,0 +1,86 @@
++from __future__ import division
++import random
++
++def uniform_int(minval, maxval):
++    "Create a function that draws ints uniformly from {minval, ..., maxval}"
++    def _draw():
++        return random.randint(minval, maxval)
++    return _draw
++
++def uniform(minval, maxval):
++    "Create a function that draws floats uniformly from [minval, maxval]"
++    def _draw():
++        return random.uniform(minval, maxval)
++    return _draw
++
++def bernoulli(p):
++    "Create a function that flips a weight coin with probability p"
++    def _draw():
++        return random.random() < p
++    return _draw
++
++def uniform_choice(choices):
++    "Create a function that draws uniformly elements from choices"
++    selector = uniform_int(0, len(choices) - 1)
++    def _draw():
++        return choices[selector()]
++    return _draw
++
++def truncate(minval, maxval):
++    def _limit(fun):
++        def _f(*args, **kargs):
++            val = fun(*args, **kargs)
++            return min(maxval, max(minval, val))
++        return _f
++    return _limit
++
++def redraw(minval, maxval):
++    def _redraw(dist):
++        def _f(*args, **kargs):
++            in_range = False
++            while not in_range:
++                val = dist(*args, **kargs)
++                in_range = minval <= val <= maxval
++            return val
++        return _f
++    return _redraw
++
++def exponential(minval, maxval, mean, limiter=redraw):
++    """Create a function that draws floats from an exponential
++    distribution with expected value 'mean'. If a drawn value is less
++    than minval or greater than maxval, then either another value is
++    drawn (if limiter=redraw) or the drawn value is set to minval or
++    maxval (if limiter=truncate)."""
++    def _draw():
++        return random.expovariate(1.0 / mean)
++    return limiter(minval, maxval)(_draw)
++
++def multimodal(weighted_distributions):
++    """Create a function that draws values from several distributions
++    with probability according to the given weights in a list of
++    (distribution, weight) pairs."""
++    total_weight = sum([w for (d, w) in weighted_distributions])
++    selector = uniform(0, total_weight)
++    def _draw():
++        x = selector()
++        wsum = 0
++        for (d, w) in weighted_distributions:
++            wsum += w
++            if wsum >= x:
++                return d()
++        assert False # should never drop off
++    return _draw
++
++def uniform_slack(min_slack_ratio, max_slack_ratio):
++    """Choose deadlines uniformly such that the slack
++       is within [cost + min_slack_ratio * (period - cost),
++                  cost + max_slack_ratio * (period - cost)].
++
++        Setting max_slack_ratio = 1 implies constrained deadlines.
++    """
++    def choose_deadline(cost, period):
++        slack = period - cost
++        earliest = slack * min_slack_ratio
++        latest   = slack * max_slack_ratio
++        return cost + random.uniform(earliest, latest)
++    return choose_deadline
+\ No newline at end of file
+diff --git a/schedRUN/schedulability/__init__.py b/schedRUN/schedulability/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/schedRUN/schedulability/schedulabilityRUN.py b/schedRUN/schedulability/schedulabilityRUN.py
+new file mode 100644
+index 0000000..b5fdebb
+--- /dev/null
++++ b/schedRUN/schedulability/schedulabilityRUN.py
+@@ -0,0 +1,69 @@
++from fractions import Fraction
++
++import schedRUN.manager.ServerResourceManager as srm
++from schedRUN.model.ServerResourceInterface import ServerResourceInterface as sri
++
++class SchedulabilityTestRUN(object) :
++
++  def __init__ (self, resources, taskset, packingAlgo = sri.worstFitAutoBins):
++    self._res = resources
++    self._ts = taskset
++    self._servers = []
++    self._packingAlgo = packingAlgo
++    return
++
++  def getServers(self) :
++    return self._servers
++
++  def getFinalUtilization(self) :
++    result = sum([float(x['cost'])/float(x['period']) for x in self._servers])
++    return result;
++
++  ''' Determines whether the taskset is schedulable given the cpu limit. If it is, it is possible to
++      later recover the packing for which the taskset is schedulable with getServer().
++      NB: limit must be an integer, representing the number of cpus of the platform. '''
++  def isSchedulable(self, limit) :
++    result = True
++    ''' create the servers for collaborative tasks and the set of independent tasks '''
++    groups = srm.manageResources(self._res, self._ts)
++    ''' if some problem while creating the servers for collaborative tasks (i.e.: some task has WCET
++        greater than period or it is impossible to create the servers at all) then the taskset is not
++        schedulable '''
++    if groups == None :
++      return False
++    ''' check the total augmented utilization of the taskset '''
++    totalUtil = Fraction()
++    independentTaskIndex = -1
++    for index in groups :
++      if len(groups[index]["resIds"]) != 0 :
++        totalUtil += sum([s.getUtilization() for s in groups[index]["servers"]])
++      else :
++        totalUtil += sum(Fraction(t.cost, t.period) for t in groups[index]["tasks"])
++        if independentTaskIndex != -1 :
++          print "Multiple independent task servers. ERROR!"
++        independentTaskIndex = index
++    if totalUtil > Fraction(limit, 1) :
++      return False
++
++    ''' from hereafter the taskset is schedulable. let us manage the independent tasks
++        and create the servers for them '''
++    if independentTaskIndex != -1 :
++      independentTasks = sorted(groups[independentTaskIndex]["tasks"], key=lambda x: float(x.cost)/float(x.period), reverse=True)
++      #groups[independentTaskIndex]["servers"] = self._packingAlgo(groups[independentTaskIndex]["tasks"])
++      groups[independentTaskIndex]["servers"] = self._packingAlgo(independentTasks)
++
++    ''' let us create servers representing the packing of the tasks '''
++    serverIndex = 0
++    for index in groups :
++      if len(groups[index]["resIds"]) != 0 :
++        self._servers.extend(
++          [{'cost'  : x.getUtilization().numerator,
++            'period': x.getUtilization().denominator,
++            'tasks' : x._tasks} for x in groups[index]["servers"]])
++      else :
++        self._servers.extend(
++          [{'cost'  : sum([Fraction(y.cost, y.period) for y in x]).numerator,
++            'period': sum([Fraction(y.cost, y.period) for y in x]).denominator,
++            'tasks' : x} for x in groups[index]["servers"]])
++
++    return True
+\ No newline at end of file
+diff --git a/schedRUN/test.py b/schedRUN/test.py
+new file mode 100644
+index 0000000..02fd65f
+--- /dev/null
++++ b/schedRUN/test.py
+@@ -0,0 +1,55 @@
++import sys
++sys.path.insert(1, '/home/luca/Desktop/AAAA/run_litmus_tool')
++
++import schedRUN.model.SystemResourceGenerator as srg
++import schedRUN.manager.ServerResourceManager as srm
++from schedRUN.schedulability.schedulabilityRUN import SchedulabilityTestRUN as schedTestRUN
++
++import expconfig as cfg
++
++resDistr = 1.0
++resWeight = .05
++resNumb = 2
++reqNumb = 2
++utilLimit = 6.0
++cpuLimit = 8
++
++counter = 0
++avgincrement = 0.0
++
++taskSetGenerator = srg.SystemResourcesGenerator(
++  cfg.NAMED_PERIODS['uni-moderate'],
++  cfg.NAMED_UTILIZATIONS['uni-light'],
++  resDistr, resWeight, resNumb, reqNumb, utilLimit, cpuLimit)
++
++for i in range(0, 100) :
++  ts = taskSetGenerator.generateTaskSetLinear(True)
++
++  sched = schedTestRUN(range(0, taskSetGenerator._rn), ts)
++  res = sched.isSchedulable(taskSetGenerator._cl)
++  buf = sched.getServers()
++
++  if not res :
++    continue
++
++  counter += 1
++  temp = ((sum([float(x['cost'])/float(x['period']) for x in buf]) -
++           sum([float(x.cost)/float(x.period) for x in ts]))/
++           sum([float(x.cost)/float(x.period) for x in ts]))
++  avgincrement += 100.0*temp
++  print ("iteratation %d : increment %.4f%%"%(i, temp))
++
++" FIND AVERAGE NUMBER OF SERVER PER RESOURCE "
++print("Average increment : %.4f%%"%(avgincrement/counter))
++'''
++for s in buf :
++  print "== Server %.6f / %.6f =============="%(float(s['cost'])/float(s['period']), sum([float(x.cost)/float(x.period) for x in s['tasks']]))
++  print "cost: %d"%(s['cost'])
++  print "period: %d"%(s['period'])
++  print ", ".join([str(x.id) for x in s['tasks']])
++
++interfaces = srm.manageResources(range(0, taskSetGenerator._rn), ts)
++
++for i in interfaces :
++  for s in interfaces[i]["servers"] :
++    print s.toString()'''
+\ No newline at end of file
+-- 
+1.9.3
+
+
+From aa4553cb96cdcd4ba2ff8092c5b825405d9c5f85 Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Tue, 1 Apr 2014 15:59:39 +0200
+Subject: [PATCH 2/6] Now create also an output file with all
+ tasks+parameters+PID
+
+---
+ run/executable/executable.py | 6 ++++++
+ run/experiment.py            | 4 ++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/run/executable/executable.py b/run/executable/executable.py
+index a2426f1..177e0e1 100644
+--- a/run/executable/executable.py
++++ b/run/executable/executable.py
+@@ -66,6 +66,12 @@ class Executable(object):
+         '''Send the terminate signal to the binary.'''
+         self.sp.terminate()
+ 
++    def getFullInfo(self) :
++        result = ""
++        result += " ".join(self.extra_args)
++        result += " " + str(self.sp.pid)
++        return result
++
+     def wait(self, error=True):
+         '''Wait until the executable is finished, checking return code.
+ 
+diff --git a/run/experiment.py b/run/experiment.py
+index 88044f5..0a6d32d 100644
+--- a/run/experiment.py
++++ b/run/experiment.py
+@@ -171,6 +171,10 @@ class Experiment(object):
+ 
+         self.__wait_for_ready()
+ 
++        moreInfo_file = open('%s/all-ts.txt' % self.working_dir, 'w')
++        for i,e in enumerate(self.executables) :
++            moreInfo_file.write(e.getFullInfo() + "\n")
++
+         # Exact tracers (like overheads) must be started right after release or
+         # measurements will be full of irrelevant records
+         self.log("Starting %d released tracers" % len(self.exact_tracers))
+-- 
+1.9.3
+
+
+From 31b4ee88c75130b5ed6030cd84a0a1a9b759443a Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Wed, 2 Apr 2014 09:36:20 +0200
+Subject: [PATCH 3/6] Added first implementation for ad-hoc parsing RUN+RSP
+
+---
+ addPath.sh      | 13 --------
+ bimodalIndex.py | 95 ---------------------------------------------------------
+ myparser.py     | 82 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 82 insertions(+), 108 deletions(-)
+ delete mode 100755 addPath.sh
+ delete mode 100644 bimodalIndex.py
+ create mode 100755 myparser.py
+
+diff --git a/addPath.sh b/addPath.sh
+deleted file mode 100755
+index a74f694..0000000
+--- a/addPath.sh
++++ /dev/null
+@@ -1,13 +0,0 @@
+-#!/bin/bash
+-
+-PATHTOLIBLITMUS=/home/luca/RUN/liblitmus
+-PATHTOFT=/home/luca/RUN/feather-trace-tools
+-PATHTOSCHEDCAT=/home/luca/RUN/schedcat
+-
+-export PATH=$PATHTOLIBLITMUS:$PATHTOFT:$PATH
+-
+-export PYTHONPATH=$PATHTOSCHEDCAT:$PYTHONPATH
+-
+-#export PYTHONPATH=/home/luca/workspace/schedRUN/src:$PYTHONPATH
+-
+-# ./gen_exps.py -f RUN res_nmb=4 res_weight=0.1 res_distr=0.8 max_util=7.0 cpus=8
+diff --git a/bimodalIndex.py b/bimodalIndex.py
+deleted file mode 100644
+index 1428ba4..0000000
+--- a/bimodalIndex.py
++++ /dev/null
+@@ -1,95 +0,0 @@
+-#!/usr/bin/env python
+-'''
+-Created on 31/ago/2013
+-
+-@author: Davide Compagnin
+-'''
+-
+-import os
+-from numpy import array
+-from decimal import Decimal
+-
+-class PeriodicTask(object):
+-    def __init__(self, exec_cost, period, id=None):
+-        self.cost = exec_cost
+-        self.period = period
+-        self.id = id
+-        
+-    def utilization(self):
+-        return Decimal(self.cost) / Decimal(self.period)
+-
+-class FixedRateTask(PeriodicTask):
+-    
+-    def __init__(self, exec_cost, period, id=None, server=None, level=-1):
+-        super(FixedRateTask,self).__init__(exec_cost, period, id)
+-        self.server = server
+-        self.level = level
+-        self.children = []
+-        self.parent = None
+-        
+-    def dual_utilization(self):
+-        return Decimal(1) - self.utilization()
+-    
+-    def get_children(self):
+-        return self.children
+-
+-def convert_data(data):
+-    '''Convert a non-python schedule file into the python format'''
+-    regex = re.compile(
+-        r"(?P<PROC>^"
+-            r"(?P<HEADER>/proc/[\w\-]+?/)?"
+-            r"(?P<ENTRY>[\w\-\/]+)"
+-              r"\s*{\s*(?P<CONTENT>.*?)\s*?}$)|"
+-        r"(?P<TASK>^"
+-            r"(?:(?P<PROG>[^\d\-\s][\w\.]*?) )?\s*"
+-            r"(?P<ARGS>[\w\-_\d\. \=]+)\s*$)",
+-        re.S|re.I|re.M)
+-
+-    procs = []
+-    tasks = []
+-
+-    for match in regex.finditer(data):
+-        if match.group("PROC"):
+-            header = match.group("HEADER") or "/proc/litmus/"
+-            loc  = "{}{}".format(header, match.group("ENTRY"))
+-            proc = (loc, match.group("CONTENT"))
+-            procs.append(proc)
+-        else:
+-            prog = match.group("PROG") or DEFAULTS['prog']
+-            spin = (prog, match.group("ARGS"))
+-            tasks.append(spin)
+-
+-    return {'proc' : procs, 'task' : tasks}
+-
+-def main():
+-
+-    with open(sys.argv[1], 'r') as f:
+-            data = f.read().strip()
+-        
+-    try:
+-        schedule = eval(data)
+-    except:
+-        schedule = convert_data(data)
+-
+-    ts = []
+-
+-    for task_conf in schedule['task']:
+-        
+-        (task, args) = (task_conf[0], task_conf[1])
+-        real_args = args.split()
+-        #Get two last arguments as cost and period respectively
+-        index = len(real_args) - 2
+-        ts.append(FixedRateTask(int(real_args[index + 0]), int(real_args[index + 1])))
+-
+-    ts1 = []
+-    ts2 = []
+-    for t in ts:
+-        if t.utilization() < Decimal("0.5")
+-            ts1.append(t)
+-        else
+-            ts2.append(t)
+-    
+-
+-    
+-if __name__ == '__main__':
+-    main()
+\ No newline at end of file
+diff --git a/myparser.py b/myparser.py
+new file mode 100755
+index 0000000..dad9a57
+--- /dev/null
++++ b/myparser.py
+@@ -0,0 +1,82 @@
++#!/usr/bin/env python
++
++import sys
++import json
++import numpy as np
++
++Total = {
++  'preemptCount':0,
++  'migCount':0,
++  'jobsCount':0,
++  'missCount':0,
++  'minLock':sys.maxint,
++  'maxLock':0,
++  'minUnlock':sys.maxint,
++  'maxUnlock':0
++}
++
++def updateTable(dest, source):
++  for key in source :
++    if key not in dest :
++      dest[key] = int(source[key])
++    else :
++      dest[key] += int(source[key])
++
++def normalizeTable(table) :
++  result = []
++  keys = table.keys()
++  maxValue = max([int(k) for k in keys])
++#  result = np.zeros((maxValue+1,), dtype=numpy.int)
++  result = [0]*(maxValue + 1)
++  for key in table :
++    result[int(key)] = int(table[key])
++  return result
++
++def toFileSimple (data, filepath) :
++  with open(filepath, 'w') as f :
++    import json
++    json.dump(data, f)
++   
++
++def toFile (data, filepath, binsize) :
++  output = normalizeTable(data)
++  with open(filepath, 'w') as f :
++    for i in  xrange(0, len(output)) :
++      f.write("{0} {1}\n".format(binsize*i, output[i]))
++
++def main() :
++  args = sys.argv
++  files = args[1:]
++  
++  tempLock = {}
++  tempUnlock = {}
++  tempSpin = {}
++  
++  for filepath in files :
++    with open(filepath) as f :
++      data = json.load(f)
++      
++      Total['preemptCount'] += int(data['preemptCount'])
++      Total['migCount'] += int(data['migCount'])
++      Total['jobsCount'] += int(data['jobsCount'])
++      Total['missCount'] += int(data['missCount'])
++      if int(data['minLock']) < Total['minLock'] :
++        Total['minLock'] = int(data['minLock'])
++      if int(data['maxLock']) > Total['maxLock'] :
++        Total['maxLock'] = int(data['maxLock'])
++      if int(data['minUnlock']) < Total['minUnlock'] :
++        Total['minUnlock'] = int(data['minUnlock'])
++      if int(data['maxUnlock']) > Total['maxUnlock'] :
++        Total['maxUnlock'] = int(data['maxUnlock'])
++      
++      updateTable(tempLock, data['tableLock'])
++      updateTable(tempUnlock, data['tableUnlock'])
++      updateTable(tempSpin, data['tableSpin'])
++      
++  toFileSimple(Total, "generalData")
++  toFile(tempLock, "overheadLock", 500)
++  toFile(tempUnlock, "overheadUnlock", 500)
++  toFile(tempSpin, "overheadSpin", 1)
++
++if __name__ == '__main__':
++    main()
+-- 
+1.9.3
+
+
+From 488c5219f21c9adcbb717b67c3f2b9fb4dbc5e2d Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Thu, 3 Apr 2014 08:34:20 +0200
+Subject: [PATCH 4/6] Added export for final_util in params.py to check the
+ augmented utilization due to the use of resources in RUN+RSP. Fixed bug in
+ the distribution of resources.
+
+---
+ gen/run_generators.py                 | 144 +++++++++++++++++-----------------
+ schedRUN/model/ResourceDistributor.py |   2 +-
+ 2 files changed, 75 insertions(+), 71 deletions(-)
+
+diff --git a/gen/run_generators.py b/gen/run_generators.py
+index 846bb8b..bf27d8c 100644
+--- a/gen/run_generators.py
++++ b/gen/run_generators.py
+@@ -3,6 +3,7 @@ from decimal import *
+ from fractions import Fraction
+ import json
+ import schedcat.generator.tasks as tasks
++from schedcat.model.tasks import SporadicTask
+ from gen.run_task import FixedRateTask
+ import run_exps
+ import edf_generators as edfGen
+@@ -13,7 +14,7 @@ TP_TBASE = """#for $t in $task_set
+ TP_RUN_TASK = TP_TBASE.format("-S $t.server")
+ TP_RUN_TASK_RES = TP_TBASE.format("-S $t.server #if len($t.resmodel)>0# -X RUN #for $r in $t.resmodel# -Q $r -L $t.resmodel[r].max_write_length #end for# #end if#")
+ 
+-MAX_TRIES = 20
++MAX_TRIES = 50
+ def ignore(_):
+     pass
+ 
+@@ -39,22 +40,22 @@ class RUNGenerator(edfGen.EdfGenerator):
+                 index = real_args.index('-S') + 2
+             ts.append(SporadicTask(int(real_args[index + 0]), int(real_args[index + 1])))
+         return ts
+-    
++
+     def _create_exp(self, exp_params) :
+-      tries = 0
+-      done = False
+-      while not done :
+-        try :
+-          super(RUNGenerator, self)._create_exp(exp_params)
+-          done = True
+-        except Exception, e :
+-          tries += 1
+-          if tries >= MAX_TRIES :
+-            print('Unfeasible parameters for {0} tasksets'.format(MAX_TRIES))
+-            return
+-      print "--- Found solution in %d tries"%(tries+1)
+-      return
+-    
++        tries = 0
++        done = False
++        while not done :
++            try :
++                super(RUNGenerator, self)._create_exp(exp_params)
++                done = True
++            except Exception, e :
++                tries += 1
++                if tries >= MAX_TRIES :
++                    print('Unfeasible parameters for {0} tasksets'.format(MAX_TRIES))
++                    return
++        print "--- Found solution in %d tries"%(tries+1)
++        return
++
+     def _customize(self, taskset, exp_params):
+         if 'max_util' in exp_params:
+             print 'sched=RUN cpus={0} max_util={1} tasks={2}'.format(unicode(exp_params['cpus']), unicode(exp_params['max_util']), unicode(len(taskset)))
+@@ -66,10 +67,10 @@ class RUNGenerator(edfGen.EdfGenerator):
+         tree_file = self.out_dir + "/tree.json"
+         with open(tree_file, 'wa') as f:
+             json.dump(data, f, indent=4)
+-            
++
+     def _reductor(self, taskset, cpus, params):
+-        
+-        #First create fixed-rates        
++
++        #First create fixed-rates
+         n_tasks = len(taskset)
+         #On heavy task case #tasks may be less than #cpus
+         if (n_tasks < cpus):
+@@ -78,23 +79,23 @@ class RUNGenerator(edfGen.EdfGenerator):
+ 
+         new_taskset = self._perform_first_packing(taskset, cpus, params)
+         unit_server = self._reduce(new_taskset, 1)
+-        
+-        if (len(unit_server) != 1 or 
+-            (unit_server[0].util_frac() != Fraction(0,1) and 
++
++        if (len(unit_server) != 1 or
++            (unit_server[0].util_frac() != Fraction(0,1) and
+              unit_server[0].util_frac() != Fraction(1,1))) :
+             #not(unit_server[0].util_frac().numerator == unit_server[0].util_frac().denominator)):
+             raise Exception('Not a Unit-Server')
+-        
+-        print 'Root level: {0}'.format(unicode(unit_server[0].level - 1)) 
+-                    
++
++        print 'Root level: {0}'.format(unicode(unit_server[0].level - 1))
++
+         return FixedRateTask.serialize(unit_server[0])
+-    
++
+     def _perform_first_packing(self, taskset, cpus, params) :
+ 
+         t_id = 0
+         fr_taskset = []
+         tot_util = Fraction()
+-        
++
+         for t in taskset:
+             t.id = t_id
+             fr_taskset.append(FixedRateTask(t.cost, t.period, t.deadline, t_id))
+@@ -102,11 +103,11 @@ class RUNGenerator(edfGen.EdfGenerator):
+             tot_util += Fraction(t.cost, t.period)
+         #Second distribuites unused cpu capacity (slack-pack)
+         print 'Total utilization: {0}'.format(Decimal(tot_util.numerator)/Decimal(tot_util.denominator))
+-        
++
+         unused_capacity = Fraction(cpus,1) - tot_util
+         if (unused_capacity < Fraction()):
+             raise Exception('Unfeasible Taskset')
+-            
++
+         if 'slack_dist' in params and params['slack_dist'] == 'tasks':
+             fr_taskset.sort(key=lambda x: x.util_frac(), reverse=True)
+             self._distribuite_slack(fr_taskset, unused_capacity)
+@@ -124,16 +125,16 @@ class RUNGenerator(edfGen.EdfGenerator):
+                     t.server = fr_t.server
+ 
+         return new_taskset
+-        
+-    
++
++
+     def _slack_dist(self, ts, slack):
+-        
++
+         n_tasks = len(ts)
+         val_a = ts[0].dual_utilization()
+         val_b = slack / Decimal(n_tasks)
+-        
++
+         unused_capacity = slack
+-        
++
+         task_extra_util = min(val_a, val_b)
+         for t in ts:
+             if (t.dual_utilization() <= task_extra_util):
+@@ -143,7 +144,7 @@ class RUNGenerator(edfGen.EdfGenerator):
+                 tmp_util = t.utilization()
+                 t.cost += int(task_extra_util * Decimal(t.period))
+                 unused_capacity -= (t.utilization() - tmp_util)
+-        
++
+         tries = 10
+         while (unused_capacity > Decimal(0)) and (tries > 0):
+             for t in ts:
+@@ -158,14 +159,14 @@ class RUNGenerator(edfGen.EdfGenerator):
+                         unused_capacity -= t.dual_utilization()
+                         t.cost = t.period
+             tries -= 1
+-            
++
+         if (unused_capacity > Decimal(0)):
+             raise Exception('Still capacity unused: ' + str(unused_capacity))
+-    
++
+     def _distribuite_slack(self, ts, slack):
+         ts.sort(key=lambda x: x.util_frac(), reverse=True)
+         i = 0
+-        unused_capacity = slack        
++        unused_capacity = slack
+         while (unused_capacity > Fraction()) and (i < len(ts)):
+             t = ts[i]
+             if (t.dual_util_frac() <= unused_capacity):
+@@ -176,76 +177,76 @@ class RUNGenerator(edfGen.EdfGenerator):
+                 t.cost = tmp_frac.numerator
+                 t.period = tmp_frac.denominator
+                 unused_capacity = Fraction()
+-            i+=1            
++            i+=1
+         if (unused_capacity > Fraction()):
+             raise Exception('Still capacity unused: ' + str(unused_capacity))
+-        
++
+     def _dual(self, taskset):
+         for t in taskset:
+             t.cost = t.period - t.cost
+-        
++
+     def _pack(self, taskset, cpus, level):
+         self.misfit = 0
+         n_bins = cpus
+-        
++
+         taskset.sort(key=lambda x: x.util_frac(), reverse=True)
+-        
+-        bins = RUNGenerator.worst_fit(taskset, 
+-                                      n_bins, 
+-                                      Fraction(1,1), 
+-                                      lambda x: x.util_frac(), 
++
++        bins = RUNGenerator.worst_fit(taskset,
++                                      n_bins,
++                                      Fraction(1,1),
++                                      lambda x: x.util_frac(),
+                                       self._misfit)
+         while (self.misfit > 0):
+             #n_bins += math.ceil(self.misfit)
+             n_bins += 1 #self.misfit
+             self.misfit = 0
+-            bins = RUNGenerator.worst_fit(taskset, 
+-                                          n_bins, 
+-                                          Fraction(1,1), 
++            bins = RUNGenerator.worst_fit(taskset,
++                                          n_bins,
++                                          Fraction(1,1),
+                                           lambda x: x.util_frac(),
+-                                          self._misfit)    
++                                          self._misfit)
+         servers = []
+         for item in bins:
+             tmp_server = FixedRateTask._aggregate(item, self.server_count, level)
+             servers.append(tmp_server)
+             self.server_count += 1
+-        
++
+         self.misfit = 0
+         return servers
+-        
++
+     def _misfit(self, x):
+         #self.misfit += x.dual_utilization()
+         self.misfit += 1
+-           
++
+     def _reduce(self, taskset, level):
+         utilization = Fraction()
+         for t in taskset:
+             utilization += t.util_frac()
+-        
+-        new_taskset = self._pack(taskset, 
+-                                 int(math.ceil(utilization)), 
++
++        new_taskset = self._pack(taskset,
++                                 int(math.ceil(utilization)),
+                                  level)
+         self._dual(new_taskset)
+-        
++
+         if (utilization <= Fraction(1,1)):
+             return new_taskset
+         else:
+             return self._reduce(new_taskset, level + 1)
+-        
++
+     def _create_taskset(self, params, periods, utils, max_util = None):
+ 
+         if 'max_util' in params:
+-            max_util = float(params['max_util'])        
++            max_util = float(params['max_util'])
+             if (max_util < 0.0) or (max_util > float(params['cpus'])):
+                 raise Exception('Incorrect max_util')
+-             
++
+             tg = tasks.TaskGenerator(period=periods, util=utils)
+             ts = tg.make_task_set(max_tasks = None, max_util=max_util)
+             #print ('#%d tasks' % len(ts))
+             return ts
+         else:
+             return super(RUNGenerator, self)._create_taskset(params, periods, utils, float(params['cpus']))
+-    
++
+     @staticmethod
+     def worst_fit(items, bins, capacity=Fraction(1,1), weight=id, misfit=ignore, empty_bin=list):
+         sets = [empty_bin() for _ in xrange(0, bins)]
+@@ -275,7 +276,7 @@ class RUNGeneratorRes(RUNGenerator):
+     paramsRes = [(x in params) for x in ['res_nmb', 'res_weight', 'res_distr', 'max_util', 'cpus']]
+     if not all(paramsRes) :
+       raise Exception('Some argument missing: res_nmb, res_weight, res_distr, max_util, cpus')
+-          
++
+     ''' Generate system with resources '''
+     import sys
+     import schedRUN.model.SystemResourceGenerator as srg
+@@ -285,8 +286,9 @@ class RUNGeneratorRes(RUNGenerator):
+     rn = int(params['res_nmb'])
+     ul = float(params['max_util'])
+     cl = int(params['cpus'])
+-    tg = srg.SystemResourcesGenerator(periodDistr=periods, 
+-      utilDistr=utils, resDistr=rd, resWeight=rw, resNumber=rn, 
++
++    tg = srg.SystemResourcesGenerator(periodDistr=periods,
++      utilDistr=utils, resDistr=rd, resWeight=rw, resNumber=rn,
+       reqNumber=1, utilLimit=ul, cpuLimit=cl)
+     ts = tg.generateTaskSetLinear()
+ 
+@@ -295,13 +297,15 @@ class RUNGeneratorRes(RUNGenerator):
+   def _perform_first_packing(self, taskset, cpus, params) :
+ 
+     import schedRUN.schedulability.schedulabilityRUN as sRUN
+-    
++
+     helper = sRUN.SchedulabilityTestRUN(range(0, int(params['res_nmb'])), taskset)
+     isSchedulable = helper.isSchedulable(int(params['cpus']))
+ 
+     if not isSchedulable :
+       raise Exception('Unfeasible Taskset with RUNRSP')
+ 
++    params['final_util'] = "{0:f}".format(helper.getFinalUtilization())
++
+     firstLevelServers = helper.getServers()
+     new_taskset = []
+     for server in firstLevelServers :
+@@ -321,12 +325,12 @@ class RUNGeneratorRes(RUNGenerator):
+         #t.deadline = float(t.deadline)/float(srg.SCALING_PARAM)
+         #for r in t.resmodel :
+         #  t.resmodel[r].max_write_length = float(t.resmodel[r].max_write_length)/float(srg.SCALING_PARAM)
+-      
++
+       new_taskset.append(newFixedRateTask)
+       self.server_count += 1
+ 
+     """ We know for sure that the taskset is schedulable, but it can be that
+-        the slack of the system is too big (the system can afford to have one 
++        the slack of the system is too big (the system can afford to have one
+         or more unused processors). We manage accordingly such slack and reduce
+         the number of necessary cpu to run the system. """
+     systemUtilization = sum([Fraction(x.cost, x.period) for x in new_taskset])
+@@ -334,7 +338,7 @@ class RUNGeneratorRes(RUNGenerator):
+     unused_capacity = Fraction(necessaryCPUs,1) - systemUtilization
+     new_taskset.sort(key=lambda x: x.utilization(), reverse=True)
+     self._distribuite_slack(new_taskset, unused_capacity)
+-    
++
+     self._dual(new_taskset)
+-    
++
+     return new_taskset
+diff --git a/schedRUN/model/ResourceDistributor.py b/schedRUN/model/ResourceDistributor.py
+index ce8b1e3..1cdf453 100644
+--- a/schedRUN/model/ResourceDistributor.py
++++ b/schedRUN/model/ResourceDistributor.py
+@@ -28,7 +28,7 @@ def distributeLinear(resRange, resWeight, resRequest, fixedRequests, ts) :
+   if len(ts) < len(resRange) :
+     resRange = range(0, len(ts))
+   a = len(ts)/len(resRange)
+-  b = len(ts)%a
++  b = len(ts)%len(resRange)
+   index = 0
+ 
+   "STEP1) initialize the bins: one per resource."
+-- 
+1.9.3
+
+
+From 631e782457ec5569ddeb67c75ada5cab7747cdb1 Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Thu, 5 Jun 2014 08:21:59 +0200
+Subject: [PATCH 5/6] added different method of packing
+
+---
+ batch.sh                                  |   8 ++
+ gen/run_generators.py                     |   2 +-
+ moreResExp.py                             | 208 ++++++++++++++++++++++++++++++
+ mparser.py                                |  62 +++++++++
+ mparser2.py                               |  36 ++++++
+ mygen                                     |   1 -
+ oneResExp.py                              | 140 ++++++++++++++++++++
+ schedRUN/manager/ServerResourceManager.py |  55 +++++++-
+ schedRUN/model/ResourceManager.py         |  38 ++++++
+ schedRUN/model/ServerResourceInterface.py |   2 +-
+ schedRUN/test2.py                         |  55 ++++++++
+ 11 files changed, 603 insertions(+), 4 deletions(-)
+ create mode 100755 batch.sh
+ create mode 100755 moreResExp.py
+ create mode 100755 mparser.py
+ create mode 100755 mparser2.py
+ delete mode 100755 mygen
+ create mode 100755 oneResExp.py
+ create mode 100644 schedRUN/model/ResourceManager.py
+ create mode 100644 schedRUN/test2.py
+
+diff --git a/batch.sh b/batch.sh
+new file mode 100755
+index 0000000..3be68d3
+--- /dev/null
++++ b/batch.sh
+@@ -0,0 +1,8 @@
++#!/bin/bash
++
++for i in 1 1.5 2 2.5 3 4 5 7 10
++do
++  output="/home/luca/data/moreResExps/exp$i/"
++  mkdir -p $output
++  ./moreResExp.py -o $output -n 100 -q 7 -e $i
++done
+diff --git a/gen/run_generators.py b/gen/run_generators.py
+index bf27d8c..522c6d6 100644
+--- a/gen/run_generators.py
++++ b/gen/run_generators.py
+@@ -14,7 +14,7 @@ TP_TBASE = """#for $t in $task_set
+ TP_RUN_TASK = TP_TBASE.format("-S $t.server")
+ TP_RUN_TASK_RES = TP_TBASE.format("-S $t.server #if len($t.resmodel)>0# -X RUN #for $r in $t.resmodel# -Q $r -L $t.resmodel[r].max_write_length #end for# #end if#")
+ 
+-MAX_TRIES = 50
++MAX_TRIES = 100
+ def ignore(_):
+     pass
+ 
+diff --git a/moreResExp.py b/moreResExp.py
+new file mode 100755
+index 0000000..1b83366
+--- /dev/null
++++ b/moreResExp.py
+@@ -0,0 +1,208 @@
++#!/usr/bin/env python
++
++import schedRUN.model.rv as rv
++import schedRUN.model.ResourceManager as resmng
++import schedRUN.manager.ServerResourceManager as srm
++import schedcat.generator.tasks as tasks
++import schedcat.model.resources as resources
++import multiprocessing
++import traceback
++import math
++from optparse import OptionParser
++
++# ./moreResExp.py -o /home/luca/asddd/ -q1 -n1 -e1
++def parseArgs () :
++    parser = OptionParser("usage: %prog [options]")
++
++    parser.add_option('-o', '--out-dir', dest='out_dir',
++                      help='directory for data output',
++                      default=("/home/luca/data/"))
++    parser.add_option('-q', '--processes-pool', type='int', dest='processes',
++                      help='number of processes used for parsing',
++                      default=1,)
++    parser.add_option('-n', '--trials', type='int', dest='trials',
++                      help='number of experiment with configuration',
++                      default=10,)
++    parser.add_option('-s', '--system-size', type='int', dest='systemSize',
++                      help='size of the system (number of tasks)',
++                      default=50)
++    parser.add_option('-u', '--min-utilizations', type='float', dest='minUtil',
++                      help='minimum utilization for generated tasks',
++                      default=0.1)
++    parser.add_option('-U', '--max-utilizations', type='float', dest='maxUtil',
++                      help='minimum utilization for generated tasks',
++                      default=0.3)
++    parser.add_option('-p', '--min-periods', type='int', dest='minPeriod',
++                      help='minimum period for generated tasks, in milliseconds',
++                      default=10)
++    parser.add_option('-P', '--max-periods', type='int', dest='maxPeriod',
++                      help='minimum period for generated tasks, in milliseconds',
++                      default=100)
++    parser.add_option('-r', '--res-length', type='int', dest='resLength',
++                      help='length of critical section, in microseconds',
++                      default=100)
++    parser.add_option('-R', '--requests-num', type='int', dest='numRequests',
++                      help='number of critical sections per task',
++                      default=1)
++    parser.add_option('-e', '--resource-entropy', type='float', dest='resEntropy',
++                      help='degree of entropy in the distribution of resources',
++                      default=2.0)
++    parser.add_option('-E', '--resources-per-task', type='int', dest='resPerTask',
++                      help='number of resources used by each task',
++                      default=3)
++    return parser.parse_args()
++
++def printArgs(opts) :
++  print ""\
++    "total experiments = {0}\n"\
++    "output dir = {1}\n"\
++    "number of processes to use = {2}\n"\
++    "---------------------------\n".format(opts.trials, opts.out_dir, opts.processes) +\
++    infoString(opts)
++
++def infoString(opts) :
++    return ""\
++      "taskset size = {0}\n"\
++      "task periods = uniform({1}, {2}) ms\n"\
++      "task utilization = uniform({3}, {4})\n"\
++      "critical section = {5} us\n"\
++      "number requests = {6}\n"\
++      "resources per task = {7}\n"\
++      "degree of entropy = {8}\n"\
++      "resources per group = {9}".format(opts.systemSize, opts.minPeriod, 
++      opts.maxPeriod, opts.minUtil, opts.maxUtil, opts.resLength, 
++      opts.numRequests, opts.resPerTask, opts.resEntropy, 
++      int(math.ceil(opts.resPerTask*opts.resEntropy)))
++
++def save(output):
++  for i in sorted(output.keys()):
++    print i, output[i]['groupCount'], output[i]['serverCount'], output[i]['augment'], output[i]['util']
++
++def createString(exp):
++  result = "\n"
++  for i in sorted(exp.keys()):
++    result += '{:>4d} {:>6.3f} {:>6.3f} {:>9.5f} {:>9.5f}\n'.format(i, exp[i]['groupCount'], exp[i]['serverCount'], exp[i]['augment'], float(exp[i]['util']))
++  return result+"\n"
++
++def generateTaskSetBase(taskPeriod, taskUtil, systemSize):
++  tg = tasks.TaskGenerator(taskPeriod, taskUtil)
++  ts = tg.make_task_set(max_tasks = systemSize)
++  ts = [t for t in ts if t.cost != 0]
++  " scale the parameters such that we always consider times in microseconds "
++  for i in range(0, len(ts)):
++    ts[i].id = i
++    ts[i].cost *= 1000
++    ts[i].period *= 1000
++  " initialize the resources in the model "
++  resources.initialize_resource_model(ts)
++  return ts
++
++
++def oneExp(opts):
++
++  resultFineGrain = {}
++  resultCoarseGrain = {}
++  taskPeriod = rv.uniform_int(opts.minPeriod, opts.maxPeriod)
++  taskUtil = rv.uniform(opts.minUtil, opts.maxUtil)
++  ts = generateTaskSetBase(taskPeriod, taskUtil, opts.systemSize)
++  initialUtil = sum([float(x.cost)/float(x.period) for x in ts])
++  groupSize = int(math.ceil(opts.resPerTask*opts.resEntropy))
++  resManager = resmng.GroupResourceManager(range(0, groupSize), groupSize)
++  
++#  resManager.distributeResources(ts, opts.resPerTask, opts.resLength, opts.numRequests)
++#  return srm.manageResourcesFineGrained(ts)
++  
++  resultFineGrain[0] = {'util':initialUtil, 'groupCount':0, 'serverCount':0, 'augment':0.0}
++  resultCoarseGrain[0] = {'util':initialUtil, 'groupCount':0, 'serverCount':0, 'augment':0.0}
++  for i in range(2, opts.systemSize+2, 2):
++    resManager.distributeResources(ts[i-2:i], opts.resPerTask, opts.resLength, opts.numRequests)
++    
++    # FINE GRAINED SERVERS
++    groups = srm.manageResourcesFineGrained(ts[0:i])
++    if (groups is not None):
++      servers = reduce(lambda x,y: x+y, [groups[g]["servers"] for g in groups])
++      augmentedUtil = sum([x.getUtilization() for x in servers]) + sum([x.utilization() for x in ts[i:opts.systemSize]])
++      augmentFactor = (augmentedUtil-initialUtil)/initialUtil
++      resultFineGrain[i] = {'util': augmentedUtil, 'groupCount':len(groups), 'serverCount': len(servers), 'augment': augmentFactor}
++    else :
++      resultFineGrain[i] = {'util': 0.0, 'groupCount':0, 'serverCount': 0, 'augment': 0.0}
++    
++    # COARSE GRAINED SERVERS
++    groups = srm.manageResources(resManager.getAllResources(), ts[0:i])
++    if (groups is not None):
++      servers = reduce(lambda x,y: x+y, [groups[g]["servers"] for g in groups])
++      augmentedUtil = sum([x.getUtilization() for x in servers]) + sum([x.utilization() for x in ts[i:opts.systemSize]])
++      augmentFactor = (augmentedUtil-initialUtil)/initialUtil
++      resultCoarseGrain[i] = {'util': augmentedUtil, 'groupCount':len(groups), 'serverCount': len(servers), 'augment': augmentFactor}
++    else :
++      resultCoarseGrain[i] = {'util': 0.0, 'groupCount':0, 'serverCount': 0, 'augment': 0.0}
++      
++  return (resultFineGrain, resultCoarseGrain)
++
++def main() :
++  opts, _ = parseArgs()
++  printArgs(opts)
++  totalFineGrain = {}
++  totalCoarseGrain = {}
++  pool = multiprocessing.Pool(processes=opts.processes)
++  enum = pool.imap_unordered(oneExp, [opts]*opts.trials)
++  try :
++    for result in enumerate(enum):
++      print str(result[0])
++      totalFineGrain[result[0]] = result[1][0]
++      totalCoarseGrain[result[0]] = result[1][1]
++
++    pool.close()
++  except:
++    pool.terminate()
++    traceback.print_exc()
++    raise Exception("Failed something!")
++  finally:
++    pool.join()
++
++  with open(opts.out_dir+'fullFine', 'w') as f:
++    for key in totalFineGrain:
++      f.write(createString(totalFineGrain[key]))
++  with open(opts.out_dir+'fullCoarse', 'w') as f:
++    for key in totalCoarseGrain:
++      f.write(createString(totalCoarseGrain[key]))
++  with open(opts.out_dir+'averageFine', 'w') as f:
++    result = {}
++    for i in range(0, opts.systemSize+2, 2):
++      result[i] = {
++        'util': sum([totalFineGrain[x][i]['util'] for x in totalFineGrain])/float(len(totalFineGrain)),
++        'groupCount': sum([totalFineGrain[x][i]['groupCount'] for x in totalFineGrain])/float(len(totalFineGrain)),
++        'serverCount': sum([totalFineGrain[x][i]['serverCount'] for x in totalFineGrain])/float(len(totalFineGrain)),
++        'augment': sum([totalFineGrain[x][i]['augment'] for x in totalFineGrain])/float(len(totalFineGrain))}
++    f.write(createString(result))
++  with open(opts.out_dir+'averageCoarse', 'w') as f:
++    result = {}
++    for i in range(0, opts.systemSize+2, 2):
++      result[i] = {
++        'util': sum([totalCoarseGrain[x][i]['util'] for x in totalCoarseGrain])/float(len(totalCoarseGrain)),
++        'groupCount': sum([totalCoarseGrain[x][i]['groupCount'] for x in totalCoarseGrain])/float(len(totalCoarseGrain)),
++        'serverCount': sum([totalCoarseGrain[x][i]['serverCount'] for x in totalCoarseGrain])/float(len(totalCoarseGrain)),
++        'augment': sum([totalCoarseGrain[x][i]['augment'] for x in totalCoarseGrain])/float(len(totalCoarseGrain))}
++    f.write(createString(result))
++  with open (opts.out_dir+'info', 'w') as f:
++    f.write(infoString(opts))
++
++def debug():
++  opts, _ = parseArgs()
++  printArgs(opts)
++  k=oneExp(opts)
++  for i in k :
++    print "(("+str(i)+")) : [ ",
++    for r in k[i]["resIds"]:
++      print str(r)+" ",
++    print "]"
++    for t in k[i]["servers"]:
++      print t.toString()
++'''    for t in k[i]["tasks"]:
++      print "\tid:"+str(t.id)+" -- [ ",
++      for r in t.resmodel:
++        print str(r)+" ",
++      print " ]" '''
++    
++if __name__ == '__main__':
++  main()
+diff --git a/mparser.py b/mparser.py
+new file mode 100755
+index 0000000..0ebcf49
+--- /dev/null
++++ b/mparser.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python
++
++import multiprocessing
++import os
++import glob
++import sys
++from optparse import OptionParser
++import traceback
++import re
++
++import unit_trace
++from unit_trace import ucheck
++from unit_trace import trace_reader
++
++
++def parseArgs () :
++    parser = OptionParser("usage: %prog [options] [data folders...]")
++
++    parser.add_option('-o', '--out-dir', dest='out_dir',
++                      help='directory for data output',
++                      default=("%s/%s"% (os.getcwd(), 'parsed')))
++    parser.add_option('-n', '--num-processes', default=1, type='int', dest='procs',
++                      help='number of processed used for parsing')
++    return parser.parse_args()
++
++def parseData(folder_output) :
++  folder, output = folder_output
++  traces = glob.glob(folder+"/st*bin")
++  specs = re.match(r'.*/sched=RUN_(.*)', folder)
++  outputfile = output+"/parsed_"+specs.group(1)
++  stream = trace_reader.trace_reader(traces)
++  ucheck.startcount(stream, folder, outputfile)
++  return True
++
++def removeLastSlash(x) :
++  if x.endswith('/'):
++    return x[:-1]
++  return x
++
++def main () :
++
++  opts, folders = parseArgs()
++  datafolders = map(removeLastSlash, folders)
++  print "OPTS: ", opts
++  print datafolders
++  pool = multiprocessing.Pool(processes=opts.procs)
++  args = zip(folders, [opts.out_dir]*len(folders))
++  enum = pool.imap_unordered(parseData, args)
++  try :
++    for result in enumerate(enum):
++      print "Parsed file "+str(result)
++    
++    pool.close()
++  except:
++    pool.terminate()
++    traceback.print_exc()
++    raise Exception("Failed parsing!")
++  finally:
++    pool.join()
++ 
++if __name__ == "__main__" :
++  main()
+diff --git a/mparser2.py b/mparser2.py
+new file mode 100755
+index 0000000..2760665
+--- /dev/null
++++ b/mparser2.py
+@@ -0,0 +1,36 @@
++#!/usr/bin/env python
++
++import sys
++import math
++import numpy as np
++
++def mergeSamples(filename):
++  maxvalue = 0;
++  sumvalue = 0;
++  count = 0;
++  table={};
++  with open(filename, 'r') as f:
++    for line in f:
++      value = int(line);
++      index = int(math.floor(value/500.0));
++      if index not in table.keys():
++        table[index] = 0;
++      table[index] += 1;
++      sumvalue += value;
++      count += 1;
++      if value > maxvalue:
++        maxvalue = value;
++  with open('merge'+filename, 'w') as f:
++    index = int(math.floor(maxvalue/500.0))+1;
++    result = [0]*(index);
++    for k in table.keys():
++      result[k] = table[k];
++    for i in range(0, index):
++      f.write(str(i*500) + ", " + str(result[i])+"\n");
++
++def main():
++  mergeSamples("outputLOCK");
++  mergeSamples("outputUNLOCK");
++
++if __name__ == '__main__':
++    main()
+diff --git a/mygen b/mygen
+deleted file mode 100755
+index 8d88bd4..0000000
+--- a/mygen
++++ /dev/null
+@@ -1 +0,0 @@
+-./gen_exps.py -fr RUN -n10 max_util=7.1 cpus=8 res_distr=0.5 res_weight=0.01 res_nmb=4
+diff --git a/oneResExp.py b/oneResExp.py
+new file mode 100755
+index 0000000..83dec76
+--- /dev/null
++++ b/oneResExp.py
+@@ -0,0 +1,140 @@
++#!/usr/bin/env python
++
++import schedRUN.model.rv as rv
++import schedRUN.manager.ServerResourceManager as srm
++import schedcat.generator.tasks as tasks
++import schedcat.model.resources as resources
++import multiprocessing
++import traceback
++from optparse import OptionParser
++
++def parseArgs () :
++    parser = OptionParser("usage: %prog [options]")
++
++    parser.add_option('-o', '--out-dir', dest='out_dir',
++                      help='directory for data output',
++                      default=("/home/luca/data/"))
++    parser.add_option('-q', '--processes-pool', type='int', dest='processes',
++                      help='number of processes used for parsing',
++                      default=1,)
++    parser.add_option('-n', '--trials', type='int', dest='trials',
++                      help='number of experiment with configuration',
++                      default=10,)
++    parser.add_option('-s', '--system-size', type='int', dest='systemSize',
++                      help='size of the system (number of tasks)',
++                      default=50)
++    parser.add_option('-u', '--min-utilizations', type='float', dest='minUtil',
++                      help='minimum utilization for generated tasks',
++                      default=0.1)
++    parser.add_option('-U', '--max-utilizations', type='float', dest='maxUtil',
++                      help='minimum utilization for generated tasks',
++                      default=0.3)
++    parser.add_option('-p', '--min-periods', type='int', dest='minPeriod',
++                      help='minimum period for generated tasks, in milliseconds',
++                      default=10)
++    parser.add_option('-P', '--max-periods', type='int', dest='maxPeriod',
++                      help='minimum period for generated tasks, in milliseconds',
++                      default=100)
++    parser.add_option('-r', '--res-length', type='int', dest='resLength',
++                      help='length of critical section, in microseconds',
++                      default=100)
++    parser.add_option('-R', '--requests-num', type='int', dest='numRequests',
++                      help='number of critical sections per task',
++                      default=1)
++    return parser.parse_args()
++
++def printArgs(opts) :
++  print ""\
++    "total experiments = {0}\n"\
++    "output dir = {1}\n"\
++    "number of processes to use = {2}\n"\
++    "---------------------------\n".format(opts.trials, opts.out_dir, opts.processes) +\
++    infoString(opts)
++
++def infoString(opts) :
++    return ""\
++      "taskset size = {0}\n"\
++      "task periods = uniform({1}, {2}) ms\n"\
++      "task utilization = uniform({3}, {4})\n"\
++      "critical section = {5} us\n"\
++      "number requests = {6}\n".format(opts.systemSize, opts.minPeriod, 
++      opts.maxPeriod, opts.minUtil, opts.maxUtil, opts.resLength, 
++      opts.numRequests)
++
++def save(output):
++  for i in sorted(output.keys()):
++    print i, output[i]['serverCount'], output[i]['augment'], output[i]['util']
++
++def createString(exp):
++  result = "\n"
++  for i in sorted(exp.keys()):
++    result += '{:>4d} {:>6.3f} {:>9.5f} {:>9.5f}\n'.format(i, exp[i]['serverCount'], exp[i]['augment'], float(exp[i]['util']))
++  return result+"\n"
++
++def generateTaskSetBase(taskPeriod, taskUtil, systemSize):
++  tg = tasks.TaskGenerator(taskPeriod, taskUtil)
++  ts = tg.make_task_set(max_tasks = systemSize)
++  ts = [t for t in ts if t.cost != 0]
++  " scale the parameters such that we always consider times in microseconds "
++  for i in range(0, len(ts)):
++    ts[i].id = i
++    ts[i].cost *= 1000
++    ts[i].period *= 1000
++  " initialize the resources in the model "
++  resources.initialize_resource_model(ts)
++  return ts
++
++def oneExp(opts):
++  result = {}
++  taskPeriod = rv.uniform_int(opts.minPeriod, opts.maxPeriod)
++  taskUtil = rv.uniform(opts.minUtil, opts.maxUtil)
++  ts = generateTaskSetBase(taskPeriod, taskUtil, opts.systemSize)
++  initialUtil = sum([float(x.cost)/float(x.period) for x in ts])
++  result[0] = {'util':initialUtil, 'serverCount':0, 'augment':0.0}
++  for i in range(2, opts.systemSize+2, 2):
++    for k in range(0, opts.numRequests):
++      map(lambda x : x.resmodel[1].add_write_request(opts.resLength), ts[i-2:i])
++    servers = srm.createServers([1], ts[0:i])
++    if (servers is not None):
++      augmentedUtil = sum([x.getUtilization() for x in servers]) + sum([0]+[x.utilization() for x in ts[i:opts.systemSize]])
++      augmentFactor = (augmentedUtil-initialUtil)/initialUtil
++      result[i] = {'util': augmentedUtil, 'serverCount': len(servers), 'augment': augmentFactor}
++    else :
++      result[i] = {'util': 0.0, 'serverCount': 0, 'augment': 0.0}
++  return result
++
++def main() :
++  opts, _ = parseArgs()
++  printArgs(opts)
++  total = {}
++  pool = multiprocessing.Pool(processes=opts.processes)
++  enum = pool.imap_unordered(oneExp, [opts]*opts.trials)
++  try :
++    for result in enumerate(enum):
++      print str(result[0])
++      total[result[0]] = result[1]
++
++    pool.close()
++  except:
++    pool.terminate()
++    traceback.print_exc()
++    raise Exception("Failed something!")
++  finally:
++    pool.join()
++
++  with open(opts.out_dir+'full', 'w') as f:
++    for key in total:
++      f.write(createString(total[key]))
++  with open(opts.out_dir+'average', 'w') as f:
++    result = {}
++    for i in range(0, opts.systemSize+2, 2):
++      result[i] = {
++        'util': sum([total[x][i]['util'] for x in total])/float(len(total)),
++        'serverCount': sum([total[x][i]['serverCount'] for x in total])/float(len(total)),
++        'augment': sum([total[x][i]['augment'] for x in total])/float(len(total))}
++    f.write(createString(result))
++  with open (opts.out_dir+'info', 'w') as f:
++    f.write(infoString(opts))
++    
++if __name__ == '__main__':
++  main()
+diff --git a/schedRUN/manager/ServerResourceManager.py b/schedRUN/manager/ServerResourceManager.py
+index c34f33f..3314ba2 100644
+--- a/schedRUN/manager/ServerResourceManager.py
++++ b/schedRUN/manager/ServerResourceManager.py
+@@ -36,6 +36,53 @@ def findStronglyConnectedSets(resources, taskset):
+     groupIndex += 1
+   return groups
+ 
++def findExactSubsets(taskset):
++  groups = {}
++  groupIndex = 0
++  for t in taskset :
++    res = t.resmodel.keys()
++    found = False
++    for g in groups:
++      if groups[g]["resIds"] == res :
++        groups[g]["tasks"].append(t)
++        found = True
++        break
++    if not found:
++      groups[groupIndex] = {}
++      groups[groupIndex]["resIds"] = res
++      groups[groupIndex]["tasks"] = [t]
++      groupIndex += 1
++  return groups
++    
++def createFineGrainedServers(subsets):
++  for index in subsets :
++    subsets[index]["servers"] = [sri.ServerResourceInterface(subsets[index]["resIds"], subsets[index]["tasks"])]
++  
++  try:
++    index = 0
++    while index < len(subsets):
++      somethingChanged = False
++      for s in subsets[index]["servers"]:
++        allServers = reduce(lambda x,y : x+y, [subsets[e]["servers"] for e in subsets], [])
++        s.updateServerStatus(allServers)
++        while s.getUtilization() > Fraction(1,1):
++          if subsets[index]["servers"].index(s) == (len(subsets[index]["servers"])-1):
++            subsets[index]["servers"].append(sri.ServerResourceInterface(subsets[index]["resIds"], []))
++            allServers += [subsets[index]["servers"][-1]]
++          subsets[index]["servers"][-1].addTask(s.removeTask())
++          s.updateServerStatus(allServers)
++          somethingChanged = True
++      if somethingChanged :
++        index = 0
++      else :
++        index += 1
++
++  except Unschedulable, e :
++    return False
++
++  return True
++
++    
+ ''' create the servers for the given tasks which use the same resources.
+     RETURN:
+       1) the list of servers containing the tasks. The servers contain the blocking term and the tasks
+@@ -104,4 +151,10 @@ def manageResources(resources, taskset):
+     groups[index]["servers"] = []
+     groups[index]["tasks"] = independentTasks
+ 
+-  return groups
+\ No newline at end of file
++  return groups
++
++def manageResourcesFineGrained(taskset):
++  subsets = findExactSubsets(taskset)
++  if not createFineGrainedServers(subsets):
++    return None
++  return subsets
+diff --git a/schedRUN/model/ResourceManager.py b/schedRUN/model/ResourceManager.py
+new file mode 100644
+index 0000000..b2eedbf
+--- /dev/null
++++ b/schedRUN/model/ResourceManager.py
+@@ -0,0 +1,38 @@
++import random
++
++class AbstractResourceManager(object):
++  def __init__ (self, resources):
++    self._res = resources
++  
++  def distributeResources(self, tasks, resPerTask):
++    assert False
++  
++  def getAllResources(self):
++    return self._res
++  
++class GroupResourceManager(AbstractResourceManager):
++
++  def __init__ (self, resources, groupSize):
++    AbstractResourceManager.__init__(self, resources)
++    self._gSize = groupSize
++    self._groups = []
++    i = 0
++    while i+self._gSize < len(self._res) :
++      self._groups.append(self._res[i:i+self._gSize])
++      i += self._gSize
++    if i != len(self._res):
++      self._groups.append(self._res[i-self._gSize:])
++    self._resLength = {}
++    for r in self._res :
++      self._resLength[r] = random.randint(10, 150)
++    
++    
++  def distributeResources(self, tasks, resPerTask, resLength, numRequests=1):
++    for t in tasks:
++      selectedGroup = random.choice(self._groups)
++      resources = random.sample(selectedGroup, resPerTask)
++#      resources = []
++#      for k in range(0,resPerTask):
++#        resources.append(random.choice(selectedGroup))
++      for _ in range(0, numRequests):
++        map(lambda x : t.resmodel[x].add_write_request(self._resLength[x]), resources)
+diff --git a/schedRUN/model/ServerResourceInterface.py b/schedRUN/model/ServerResourceInterface.py
+index ffec46b..2864f96 100644
+--- a/schedRUN/model/ServerResourceInterface.py
++++ b/schedRUN/model/ServerResourceInterface.py
+@@ -144,4 +144,4 @@ class ServerResourceInterface(object):
+       sets[index] += [x]
+       sums[index] += c
+ 
+-    return sets
+\ No newline at end of file
++    return sets
+diff --git a/schedRUN/test2.py b/schedRUN/test2.py
+new file mode 100644
+index 0000000..02fd65f
+--- /dev/null
++++ b/schedRUN/test2.py
+@@ -0,0 +1,55 @@
++import sys
++sys.path.insert(1, '/home/luca/Desktop/AAAA/run_litmus_tool')
++
++import schedRUN.model.SystemResourceGenerator as srg
++import schedRUN.manager.ServerResourceManager as srm
++from schedRUN.schedulability.schedulabilityRUN import SchedulabilityTestRUN as schedTestRUN
++
++import expconfig as cfg
++
++resDistr = 1.0
++resWeight = .05
++resNumb = 2
++reqNumb = 2
++utilLimit = 6.0
++cpuLimit = 8
++
++counter = 0
++avgincrement = 0.0
++
++taskSetGenerator = srg.SystemResourcesGenerator(
++  cfg.NAMED_PERIODS['uni-moderate'],
++  cfg.NAMED_UTILIZATIONS['uni-light'],
++  resDistr, resWeight, resNumb, reqNumb, utilLimit, cpuLimit)
++
++for i in range(0, 100) :
++  ts = taskSetGenerator.generateTaskSetLinear(True)
++
++  sched = schedTestRUN(range(0, taskSetGenerator._rn), ts)
++  res = sched.isSchedulable(taskSetGenerator._cl)
++  buf = sched.getServers()
++
++  if not res :
++    continue
++
++  counter += 1
++  temp = ((sum([float(x['cost'])/float(x['period']) for x in buf]) -
++           sum([float(x.cost)/float(x.period) for x in ts]))/
++           sum([float(x.cost)/float(x.period) for x in ts]))
++  avgincrement += 100.0*temp
++  print ("iteratation %d : increment %.4f%%"%(i, temp))
++
++" FIND AVERAGE NUMBER OF SERVER PER RESOURCE "
++print("Average increment : %.4f%%"%(avgincrement/counter))
++'''
++for s in buf :
++  print "== Server %.6f / %.6f =============="%(float(s['cost'])/float(s['period']), sum([float(x.cost)/float(x.period) for x in s['tasks']]))
++  print "cost: %d"%(s['cost'])
++  print "period: %d"%(s['period'])
++  print ", ".join([str(x.id) for x in s['tasks']])
++
++interfaces = srm.manageResources(range(0, taskSetGenerator._rn), ts)
++
++for i in interfaces :
++  for s in interfaces[i]["servers"] :
++    print s.toString()'''
+\ No newline at end of file
+-- 
+1.9.3
+
+
+From 6a848d17d97e4856958001935c582a782cc62da9 Mon Sep 17 00:00:00 2001
+From: Luca Bonato <lohathe@gmail.com>
+Date: Fri, 26 Feb 2016 11:55:40 +0100
+Subject: [PATCH 6/6] Updated something. There is probably some garbage
+ somewhere.
+
+---
+ duplicateExpWithRes.py                       |  57 ++++++++
+ gen/run_generators.py                        |  57 +++++++-
+ mig_counter.py                               |   4 +-
+ moreResExp.py                                |  10 +-
+ moreResExp2.py                               | 201 +++++++++++++++++++++++++++
+ mparser.py                                   |   6 +-
+ mparser2.py                                  |   5 +-
+ schedRUN/manager/ServerResourceManager.py    |  54 +++----
+ schedRUN/model/ResourceManager.py            |  26 ++++
+ schedRUN/model/ServerResourceInterface.py    |   9 +-
+ schedRUN/schedulability/schedulabilityRUN.py |  20 +--
+ schedRUN/test.py                             |  14 +-
+ schedRUN/test2.py                            |  55 --------
+ 13 files changed, 406 insertions(+), 112 deletions(-)
+ create mode 100755 duplicateExpWithRes.py
+ create mode 100755 moreResExp2.py
+ delete mode 100644 schedRUN/test2.py
+
+diff --git a/duplicateExpWithRes.py b/duplicateExpWithRes.py
+new file mode 100755
+index 0000000..eef095d
+--- /dev/null
++++ b/duplicateExpWithRes.py
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python
++
++from optparse import OptionParser
++from gen.run_generators import RUNGeneratorRes
++import os
++import sys
++
++def parse_args():
++    parser = OptionParser("usage: %prog [options] [files...] "
++                          "[generators...] [param=val[,val]...]")
++
++    parser.add_option('-o', '--out-dir', dest='out_dir',
++                      help='directory for data output',
++                      default=("%s/%s"% (os.getcwd(), "RESEXPS")))
++
++    return parser.parse_args()
++
++def main():
++  opts, inFolders = parse_args()
++  distr = 0.8
++  res_number = 3
++  
++  if not os.path.exists(opts.out_dir):
++    os.mkdir(opts.out_dir)
++  if opts.out_dir[-1] != '/':
++    opts.out_dir = opts.out_dir+'/'
++  
++  for folder in inFolders:
++    done = False
++    trial = 0
++    while (not done and trial < 50):
++      try:
++        if folder[-1] == '/':
++          folder = folder[:-1]
++        foldername = folder.strip().split('/')[-1]
++        out_dir = opts.out_dir+foldername+"_res="+str(distr)+"/"
++        if not os.path.exists(out_dir):
++          os.mkdir(out_dir)
++        
++        
++        generator = RUNGeneratorRes()
++        generator.out_dir=out_dir
++
++        params = {}
++
++        ts = generator._create_taskset_from_file(params, res_number, folder, distr)
++
++        generator._customize(ts, params)
++        generator._write_schedule(dict(params.items() + [('task_set', ts)]))
++        generator._write_params(params)
++        done = True
++      except:
++        trial += 1
++        continue
++
++if __name__ == "__main__":
++  main()
+diff --git a/gen/run_generators.py b/gen/run_generators.py
+index 522c6d6..47acc63 100644
+--- a/gen/run_generators.py
++++ b/gen/run_generators.py
+@@ -4,9 +4,11 @@ from fractions import Fraction
+ import json
+ import schedcat.generator.tasks as tasks
+ from schedcat.model.tasks import SporadicTask
++import schedcat.model.resources as resources
+ from gen.run_task import FixedRateTask
+ import run_exps
+ import edf_generators as edfGen
++import random
+ 
+ TP_TBASE = """#for $t in $task_set
+ {} $t.cost $t.period
+@@ -241,7 +243,8 @@ class RUNGenerator(edfGen.EdfGenerator):
+                 raise Exception('Incorrect max_util')
+ 
+             tg = tasks.TaskGenerator(period=periods, util=utils)
+-            ts = tg.make_task_set(max_tasks = None, max_util=max_util)
++            ts = tg.make_task_set(max_tasks = None, max_util=max_util, squeeze=True)
++            ts = [t for t in ts if t.cost > 0]
+             #print ('#%d tasks' % len(ts))
+             return ts
+         else:
+@@ -294,6 +297,58 @@ class RUNGeneratorRes(RUNGenerator):
+ 
+     return ts
+ 
++  def _custom_distribute(self, ts, collaborative, res_number):
++
++    collts = sorted(ts, key=lambda x: x.cost, reverse=True)
++    last = int(round(len(collts)*collaborative))
++    collts = collts[:last]
++    modtasks = len(collts)%res_number
++    taskpergroup = (len(collts)-modtasks)/res_number
++    for r in range(0, res_number):
++      res_weight = random.randint(1,10)
++      group = collts[:taskpergroup]
++      collts = collts[taskpergroup:]
++      if modtasks > 0:
++        group.append(collts[0])
++        collts = collts[1:]
++        modtasks = modtasks -1
++      res_len = max(1, int(round(group[-1].cost*res_weight/100.0)))
++      for t in group:
++        t.resmodel[r].add_write_request(res_len)
++    
++
++  def _create_taskset_from_file(self, params, res_number, folderpath, collaborative):
++    ts = []
++    
++    """ read a taskset in sched.py done (-S option included) """
++    with open (folderpath+"/sched.py", 'r') as f:
++      index = 0
++      for line in f:
++        elements = line.split()
++        c = int(elements[4])
++        p = int(elements[5])
++        temp = SporadicTask(c, p, p)
++        temp.id = index
++        index = index + 1
++        ts.append(temp)
++    """ distribute resources """
++    resources.initialize_resource_model(ts)
++    ts.sort(key=lambda x:x.cost, reverse=True)
++    self._custom_distribute(ts, collaborative, res_number)
++    
++    """ create the params from params.py file """
++    temp = {}
++    with open (folderpath+"/params.py", 'r') as f:
++      temp = eval(f.read())
++    for key in temp:
++      params[key] = temp[key]
++    """ adding RES parameters """
++    params['cpus'] = int(params['cpus'])
++    params['res_nmb'] = res_number
++    params['res_distr'] = collaborative
++    params['res_weight'] = 0
++    return ts
++
+   def _perform_first_packing(self, taskset, cpus, params) :
+ 
+     import schedRUN.schedulability.schedulabilityRUN as sRUN
+diff --git a/mig_counter.py b/mig_counter.py
+index 6dc6a22..326c67e 100755
+--- a/mig_counter.py
++++ b/mig_counter.py
+@@ -81,7 +81,7 @@ def main():
+     
+     by_task_wcet = dict.fromkeys(by_task_events.keys(),0)
+     by_task_overhead_ratio = dict.fromkeys(by_task_events.keys(),Decimal(0))
+-    
++    '''
+     for i in by_cpu_events.keys():
+         last_switch_to = None
+         for e in by_cpu_events[i]:
+@@ -103,7 +103,7 @@ def main():
+         ns_to_ms = (by_task_wcet[t] / ONE_MS) * ONE_MS
+         if Decimal(ns_to_ms) > Decimal(0):
+         	by_task_overhead_ratio[t] = round((Decimal(by_task_wcet[t] - ns_to_ms) / Decimal(ns_to_ms)),3)
+-    
++    '''
+     
+     for t in by_task_events.keys():
+         
+diff --git a/moreResExp.py b/moreResExp.py
+index 1b83366..d2a89e2 100755
+--- a/moreResExp.py
++++ b/moreResExp.py
+@@ -120,7 +120,7 @@ def oneExp(opts):
+     # FINE GRAINED SERVERS
+     groups = srm.manageResourcesFineGrained(ts[0:i])
+     if (groups is not None):
+-      servers = reduce(lambda x,y: x+y, [groups[g]["servers"] for g in groups])
++      servers = reduce(lambda x,y: x+y, [groups[g]._servers for g in groups])
+       augmentedUtil = sum([x.getUtilization() for x in servers]) + sum([x.utilization() for x in ts[i:opts.systemSize]])
+       augmentFactor = (augmentedUtil-initialUtil)/initialUtil
+       resultFineGrain[i] = {'util': augmentedUtil, 'groupCount':len(groups), 'serverCount': len(servers), 'augment': augmentFactor}
+@@ -130,7 +130,7 @@ def oneExp(opts):
+     # COARSE GRAINED SERVERS
+     groups = srm.manageResources(resManager.getAllResources(), ts[0:i])
+     if (groups is not None):
+-      servers = reduce(lambda x,y: x+y, [groups[g]["servers"] for g in groups])
++      servers = reduce(lambda x,y: x+y, [groups[g]._servers for g in groups])
+       augmentedUtil = sum([x.getUtilization() for x in servers]) + sum([x.utilization() for x in ts[i:opts.systemSize]])
+       augmentFactor = (augmentedUtil-initialUtil)/initialUtil
+       resultCoarseGrain[i] = {'util': augmentedUtil, 'groupCount':len(groups), 'serverCount': len(servers), 'augment': augmentFactor}
+@@ -193,12 +193,12 @@ def debug():
+   k=oneExp(opts)
+   for i in k :
+     print "(("+str(i)+")) : [ ",
+-    for r in k[i]["resIds"]:
++    for r in k[i]._resIds:
+       print str(r)+" ",
+     print "]"
+-    for t in k[i]["servers"]:
++    for t in k[i]._servers:
+       print t.toString()
+-'''    for t in k[i]["tasks"]:
++'''    for t in k[i]._tasks:
+       print "\tid:"+str(t.id)+" -- [ ",
+       for r in t.resmodel:
+         print str(r)+" ",
+diff --git a/moreResExp2.py b/moreResExp2.py
+new file mode 100755
+index 0000000..b354f67
+--- /dev/null
++++ b/moreResExp2.py
+@@ -0,0 +1,201 @@
++#!/usr/bin/env python
++
++import schedRUN.model.rv as rv
++import schedRUN.model.ResourceManager as resmng
++import schedRUN.manager.ServerResourceManager as srm
++import schedcat.generator.tasks as tasks
++import schedcat.model.resources as resources
++import multiprocessing
++import traceback
++import math
++
++NAMED_UTILS = {
++  'UL': rv.uniform(0.001, 0.1), 
++  'UM': rv.uniform(0.1, 0.3),
++  'BM': rv.multimodal([(rv.uniform(0.001, 0.5), 6), (rv.uniform(  0.5, 0.9), 3)]),
++  'EM': rv.exponential(0, 1, 0.25)}
++NAMED_PERIODS = {
++  'M': rv.uniform_int(10, 100), 
++  'L': rv.uniform_int(50, 250)}
++
++def createString(exp):
++  result = "\n"
++  for e in exp:
++    result += '{:>4d} {:>6.3f} {:>6.3f} {:>6.3f}  '.format(
++      e['collaborative_tasks'], e['avg_res_per_scc'], e['avg_tasks_per_scc'], e['avg_tasks_per_res'])
++    result += '{:>8.4f} {:>8.5f} {:>6.2f} {:>6.3f}  '.format(
++      e['fg_final_util'], e['fg_augment'], e['fg_servers'], e['fg_avg_servers_per_res'])
++    result += '{:>8.4f} {:>8.5f} {:>6.2f} {:>6.3f}\n'.format(
++      e['cg_final_util'], e['cg_augment'], e['cg_servers'], e['cg_avg_servers_per_res'])
++  return result+"\n"
++
++def generateTaskSetBase(taskPeriod, taskUtil, systemSize):
++  tg = tasks.TaskGenerator(taskPeriod, taskUtil)
++  ts = tg.make_task_set(max_tasks = systemSize)
++  ts = [t for t in ts if t.cost != 0]
++  " scale the parameters such that we always consider times in microseconds "
++  for i in range(0, len(ts)):
++    ts[i].id = i
++    ts[i].cost *= 1000
++    ts[i].period *= 1000
++  " initialize the resources in the model "
++  resources.initialize_resource_model(ts)
++  return ts
++
++def getEmptyOutputRecord() :
++  return {'collaborative_tasks': 0, 'avg_res_per_scc': 0.0, 
++    'avg_tasks_per_scc': 0.0, 'avg_tasks_per_res': 0.0,
++    'fg_final_util': 0.0, 'fg_augment': 0.0, 'fg_servers': 0.0, 'fg_avg_servers_per_res': 0.0,
++    'cg_final_util': 0.0, 'cg_augment': 0.0, 'cg_servers': 0.0, 'cg_avg_servers_per_res': 0.0}
++
++def manageGeneralOutputInfo(ts, resources, i, record):
++  record['collaborative_tasks'] = i
++  scc = [e for e in srm.findStronglyConnectedComponents(resources, ts[0:i]).values() if len(e._tasks)>0]
++  if len(scc)<= 0:
++    return
++  ''' from here on, there is at least one task using at least one resource '''
++  
++  record['avg_res_per_scc'] = sum([len(e._resIds) for e in scc])/len(scc)
++  record['avg_tasks_per_scc'] = sum([len(e._tasks) for e in scc])/len(scc)
++  resCount = 0
++  tpr = 0
++  for r in resources:
++    temp = len([t for t in ts if r in t.resmodel])
++    if temp > 0:
++      tpr += temp
++      resCount += 1
++  
++  record['avg_tasks_per_res'] = float(tpr)/resCount
++
++def manageSpecificOutputInfo(ts, groups, resources, initialUtil, i, record, prefix):
++  servers = reduce(lambda x, y: x+y, [groups[g]._servers for g in groups])
++  finalUtil = float(sum([x.getUtilization() for x in servers]) + sum([x.utilization() for x in ts[i:]]))
++  record[prefix+'_final_util'] = finalUtil
++  record[prefix+'_augment'] = (finalUtil-initialUtil)/float(initialUtil)
++  record[prefix+'_servers'] = len(servers)
++  resCount = 0
++  spr = 0
++  for r in resources:
++    temp = len([s for s in servers if r in s._resIds])
++    if temp > 0:
++      spr += temp
++      resCount += 1
++  if resCount > 0:
++    record[prefix+'_avg_servers_per_res'] = float(spr)/resCount
++
++
++def createAvg(total):
++  result = []
++  totalLen = float(len(total))
++  
++  for i in range(0,len(total[0])):
++    record = getEmptyOutputRecord()
++    record['collaborative_tasks'] = total[0][i]['collaborative_tasks']
++    record['avg_res_per_scc'] = sum([e[i]['avg_res_per_scc'] for e in total])/totalLen
++    record['avg_tasks_per_scc'] = sum([e[i]['avg_tasks_per_scc'] for e in total])/totalLen
++    record['avg_tasks_per_res'] = sum([e[i]['avg_tasks_per_res'] for e in total])/totalLen
++    
++    validResults = [e for e in total if e[i]['fg_final_util']>0.0]
++    if len(validResults) > 0:
++      resultsLen = float(len(validResults))
++      record['fg_final_util'] = sum(e[i]['fg_final_util'] for e in validResults)/resultsLen
++      record['fg_augment'] = sum(e[i]['fg_augment'] for e in validResults)/resultsLen
++      record['fg_servers'] = sum(e[i]['fg_servers'] for e in validResults)/resultsLen
++      record['fg_avg_servers_per_res'] = sum(e[i]['fg_avg_servers_per_res'] for e in validResults)/resultsLen
++
++    validResults = [e for e in total if e[i]['cg_final_util']>0.0]
++    if len(validResults) > 0:
++      resultsLen = float(len(validResults))
++      record['cg_final_util'] = sum(e[i]['cg_final_util'] for e in validResults)/resultsLen
++      record['cg_augment'] = sum(e[i]['cg_augment'] for e in validResults)/resultsLen
++      record['cg_servers'] = sum(e[i]['cg_servers'] for e in validResults)/resultsLen
++      record['cg_avg_servers_per_res'] = sum(e[i]['cg_avg_servers_per_res'] for e in validResults)/resultsLen
++    result.append(record)
++  return result
++
++def oneExp(args):
++
++  result = []
++  ts = generateTaskSetBase(NAMED_PERIODS[args['taskPeriods']], NAMED_UTILS[args['taskUtils']], args['systemSize'])
++  initialUtil = sum([float(x.cost)/float(x.period) for x in ts])
++  resManager = resmng.RandomResourceManager(range(0, args['totalResources']))
++
++  result.append(getEmptyOutputRecord())
++  result[0]['fg_final_util'] = initialUtil
++  result[0]['cg_final_util'] = initialUtil
++  
++  for i in range(2, len(ts)+2, 2):
++    resManager.distributeResources(ts[i-2:i], args['maxResPerTask'])
++
++    record = getEmptyOutputRecord()
++    manageGeneralOutputInfo(ts, resManager.getAllResources(), i, record)
++    
++    # FINE GRAINED SERVERS
++    groups = srm.manageResourcesFineGrained(sorted(ts[0:i]))
++    if (groups is not None):
++      manageSpecificOutputInfo(ts, groups, resManager.getAllResources(), initialUtil, i, record, 'fg')
++       
++    # COARSE GRAINED SERVERS
++    groups = srm.manageResources(resManager.getAllResources(), sorted(ts[0:i]))
++    if (groups is not None):
++      manageSpecificOutputInfo(ts, groups, resManager.getAllResources(), initialUtil, i, record, 'cg')
++    
++    result.append(record)
++    
++  return result
++
++def main() :
++
++  syssize = [40, 60, 80, 100]
++  periods = ['M', 'L']
++  utils = ['UL', 'UM', 'BM', 'EM']
++  maxrpt = [3,5]
++  totres = [6, 12, 18, 24, 30]
++  filepath = '/home/luca/ddata/good/'
++  numExps = 100
++  
++  for s in syssize:
++    for p in periods:
++      for u in utils:
++        for q in maxrpt:
++          for r in totres:
++            file_id = 's{}q{}r{}u{}p{}'.format(str(s),str(q),str(r),u,p)
++            print file_id
++            args = {
++              'taskPeriods': p,
++              'taskUtils': u,
++              'systemSize': s,
++              'totalResources': r,
++              'maxResPerTask': q}
++            
++            total = []
++            pool = multiprocessing.Pool(processes=6)
++            enum = pool.imap_unordered(oneExp, [args]*numExps)
++            try :
++              for result in enumerate(enum):
++                total.append(result[1])
++
++              pool.close()
++              print ":"
++            except:
++              pool.terminate()
++              traceback.print_exc()
++              raise Exception("Failed something!")
++            finally:
++              pool.join()
++            '''
++            total = []
++            total.append(oneExp(args))
++            '''
++            with open(filepath+'full_'+file_id, 'w') as f:
++              for exp in total:
++                f.write(createString(exp))
++            with open(filepath+'avg_'+file_id, 'w') as f:
++              f.write(createString(createAvg(total)))
++              
++
++def debug():
++  pass
++    
++if __name__ == '__main__':
++  main()
+diff --git a/mparser.py b/mparser.py
+index 0ebcf49..81fd4bc 100755
+--- a/mparser.py
++++ b/mparser.py
+@@ -10,6 +10,7 @@ import re
+ 
+ import unit_trace
+ from unit_trace import ucheck
++from unit_trace import ucheck2
+ from unit_trace import trace_reader
+ 
+ 
+@@ -29,7 +30,7 @@ def parseData(folder_output) :
+   specs = re.match(r'.*/sched=RUN_(.*)', folder)
+   outputfile = output+"/parsed_"+specs.group(1)
+   stream = trace_reader.trace_reader(traces)
+-  ucheck.startcount(stream, folder, outputfile)
++  ucheck2.startcount(stream, folder, outputfile)
+   return True
+ 
+ def removeLastSlash(x) :
+@@ -42,7 +43,8 @@ def main () :
+   opts, folders = parseArgs()
+   datafolders = map(removeLastSlash, folders)
+   print "OPTS: ", opts
+-  print datafolders
++  print len(datafolders)
++  
+   pool = multiprocessing.Pool(processes=opts.procs)
+   args = zip(folders, [opts.out_dir]*len(folders))
+   enum = pool.imap_unordered(parseData, args)
+diff --git a/mparser2.py b/mparser2.py
+index 2760665..f411d82 100755
+--- a/mparser2.py
++++ b/mparser2.py
+@@ -29,8 +29,9 @@ def mergeSamples(filename):
+       f.write(str(i*500) + ", " + str(result[i])+"\n");
+ 
+ def main():
+-  mergeSamples("outputLOCK");
+-  mergeSamples("outputUNLOCK");
++  mergeSamples("outputSCHED");
++  #mergeSamples("outputLOCK");
++  #mergeSamples("outputUNLOCK");
+ 
+ if __name__ == '__main__':
+     main()
+diff --git a/schedRUN/manager/ServerResourceManager.py b/schedRUN/manager/ServerResourceManager.py
+index 3314ba2..3c142b3 100644
+--- a/schedRUN/manager/ServerResourceManager.py
++++ b/schedRUN/manager/ServerResourceManager.py
+@@ -1,4 +1,5 @@
+-import schedRUN.model.ServerResourceInterface as sri
++from schedRUN.model.ServerResourceInterface import ServerResourceInterface, InfoSRT
++
+ from schedRUN.model.SchedulingException import Unschedulable
+ 
+ from fractions import Fraction
+@@ -6,10 +7,11 @@ from fractions import Fraction
+ ''' determine a partitioning of the taskset in which each partition contains tasks that share the same resources.
+     Return the partitioning as an associative array.
+     RETURN:
+-    result[incremental_index] = {
+-      "resIds" = list of resources used by tasks;
+-      "tasks" = list of tasks that use the resources} '''
+-def findStronglyConnectedSets(resources, taskset):
++    result[incremental_index] = array(InfoSRT)
++      ._resIds = list of resources used by tasks;
++      ._tasks = list of tasks that use the resources;
++      ._servers = None '''
++def findStronglyConnectedComponents(resources, taskset):
+   groups = {}
+   groupIndex = 0
+   alreadyConsidered = []
+@@ -32,7 +34,9 @@ def findStronglyConnectedSets(resources, taskset):
+           tempIds = tempIds.union(set(t.resmodel.keys()))
+       idx += 1
+     alreadyConsidered.extend(tempIds)
+-    groups[groupIndex] = {"resIds": list(tempIds), "tasks": list(tempTsk)}
++    if len(tempTsk) == 0:
++      continue #skips if the resource is not used by any task!
++    groups[groupIndex] = InfoSRT(resIds= list(tempIds), tasks= list(tempTsk))
+     groupIndex += 1
+   return groups
+ 
+@@ -43,33 +47,32 @@ def findExactSubsets(taskset):
+     res = t.resmodel.keys()
+     found = False
+     for g in groups:
+-      if groups[g]["resIds"] == res :
+-        groups[g]["tasks"].append(t)
++      if groups[g]._resIds == res :
++        groups[g]._tasks.append(t)
+         found = True
+         break
+     if not found:
+-      groups[groupIndex] = {}
+-      groups[groupIndex]["resIds"] = res
+-      groups[groupIndex]["tasks"] = [t]
++      groups[groupIndex] = InfoSRT(resIds = res, tasks= [t])
+       groupIndex += 1
+   return groups
+     
+ def createFineGrainedServers(subsets):
+   for index in subsets :
+-    subsets[index]["servers"] = [sri.ServerResourceInterface(subsets[index]["resIds"], subsets[index]["tasks"])]
++    subsets[index]._servers = [ServerResourceInterface(subsets[index]._resIds, subsets[index]._tasks)]
+   
+   try:
+     index = 0
+     while index < len(subsets):
+       somethingChanged = False
+-      for s in subsets[index]["servers"]:
+-        allServers = reduce(lambda x,y : x+y, [subsets[e]["servers"] for e in subsets], [])
++      for s in subsets[index]._servers:
++        allServers = reduce(lambda x,y : x+y, [subsets[e]._servers for e in subsets], [])
+         s.updateServerStatus(allServers)
+         while s.getUtilization() > Fraction(1,1):
+-          if subsets[index]["servers"].index(s) == (len(subsets[index]["servers"])-1):
+-            subsets[index]["servers"].append(sri.ServerResourceInterface(subsets[index]["resIds"], []))
+-            allServers += [subsets[index]["servers"][-1]]
+-          subsets[index]["servers"][-1].addTask(s.removeTask())
++          s_index = subsets[index]._servers.index(s)
++          if s_index == (len(subsets[index]._servers)-1):
++            subsets[index]._servers.append(ServerResourceInterface(subsets[index]._resIds, []))
++            allServers += [subsets[index]._servers[-1]]
++          subsets[index]._servers[s_index+1].addTask(s.removeTask())
+           s.updateServerStatus(allServers)
+           somethingChanged = True
+       if somethingChanged :
+@@ -95,7 +98,7 @@ def createServers(resources, tasks):
+     tasks = sorted(tasks,
+                    key=lambda x: max(map(lambda y: x.resmodel[y].max_write_length, x.resmodel)))
+     ''' create the first server with all the tasks '''
+-    servers.append(sri.ServerResourceInterface(resources, tasks))
++    servers.append(ServerResourceInterface(resources, tasks))
+     index = 0
+     while index < len(servers) :
+       somethingChanged = False
+@@ -106,7 +109,7 @@ def createServers(resources, tasks):
+       while servers[index].getUtilization() > Fraction(1,1) :
+         ''' if it is necessary, create a new server for the removed tasks '''
+         if index == (len(servers) - 1) :
+-          servers.append(sri.ServerResourceInterface(resources, []))
++          servers.append(ServerResourceInterface(resources, []))
+         ''' pick a task in the considered server and put it in the next server in line '''
+         servers[index + 1].addTask(servers[index].removeTask())
+         ''' something has changed, update the status of the considered server '''
+@@ -130,13 +133,13 @@ def createServers(resources, tasks):
+ def manageResources(resources, taskset):
+ 
+   ''' groups together collaborative tasks '''
+-  groups = findStronglyConnectedSets(resources, taskset);
++  groups = findStronglyConnectedComponents(resources, taskset);
+ 
+   ''' create the servers that comply with RUNRSP for each group of collaborative tasks '''
+   for index in groups :
+-    groups[index]["servers"] = createServers(groups[index]["resIds"], groups[index]["tasks"])
++    groups[index]._servers = createServers(groups[index]._resIds, groups[index]._tasks)
+     ''' if some group cannot generate servers it means that the taskset is unschedulable. Abort '''
+-    if groups[index]["servers"] == None :
++    if groups[index]._servers == None :
+       return None
+ 
+   ''' create a group for independent tasks '''
+@@ -146,10 +149,7 @@ def manageResources(resources, taskset):
+       independentTasks.append(t)
+   if (len(independentTasks) != 0) :
+     index = len(groups)
+-    groups[index] = {}
+-    groups[index]["resIds"] = []
+-    groups[index]["servers"] = []
+-    groups[index]["tasks"] = independentTasks
++    groups[index] = InfoSRT(resIds=[], servers=[], tasks=independentTasks)
+ 
+   return groups
+ 
+diff --git a/schedRUN/model/ResourceManager.py b/schedRUN/model/ResourceManager.py
+index b2eedbf..010f517 100644
+--- a/schedRUN/model/ResourceManager.py
++++ b/schedRUN/model/ResourceManager.py
+@@ -36,3 +36,29 @@ class GroupResourceManager(AbstractResourceManager):
+ #        resources.append(random.choice(selectedGroup))
+       for _ in range(0, numRequests):
+         map(lambda x : t.resmodel[x].add_write_request(self._resLength[x]), resources)
++
++class RandomResourceManager(AbstractResourceManager):
++
++  def __init__(self, resources, minCost = 10, maxCost = 150):
++    AbstractResourceManager.__init__(self, resources)
++    self._resLength = {}
++    for r in self._res:
++      self._resLength[r] = random.randint(minCost, maxCost)
++  
++  def distributeResources(self, tasks, maxResPerTask, maxRequestsCount=1):
++    for t in tasks:
++      resources = []
++      for _ in range(1, maxResPerTask):
++        resources.append(random.choice(self._res))
++      totalResCost = 0
++      for r in resources:
++        for _ in range(0, maxRequestsCount) :
++          if totalResCost + self._resLength[r] <= t.cost:
++            t.resmodel[r].add_write_request(self._resLength[r])
++            totalResCost += self._resLength[r]
++          else:
++            break
++      if totalResCost == 0:
++        t.resmodel[resources[0]].add_write_request(t.cost)
++  
++
+diff --git a/schedRUN/model/ServerResourceInterface.py b/schedRUN/model/ServerResourceInterface.py
+index 2864f96..a8daf77 100644
+--- a/schedRUN/model/ServerResourceInterface.py
++++ b/schedRUN/model/ServerResourceInterface.py
+@@ -5,6 +5,13 @@ import schedcat.model.resources as resources
+ 
+ from schedRUN.model.SchedulingException import Unschedulable
+ 
++''' Class gathering the coarse information about Servers, Resources and Tasks '''
++class InfoSRT(object):
++  def __init__(self, resIds = None, tasks = None, servers = None):
++    self._resIds = resIds
++    self._tasks = tasks
++    self._servers = servers
++
+ ''' Class representing a possible server for RUN. Used to estimate the blocking
+     terms for RUNRSP.'''
+ class ServerResourceInterface(object):
+@@ -79,7 +86,7 @@ class ServerResourceInterface(object):
+       for r in t.resmodel :
+         ''' increment the cost of requests because of parallelism '''
+         taskCost += externalBlocking[r]*t.resmodel[r].max_writes
+-        ''' compute the increment on the server due to blocked task '''
++        ''' compute the increment on the server due to blocked task '''        
+         maxSurplus = max(maxSurplus, Fraction(self.getInternalBlocking(t, externalBlocking), t.period))
+ 
+       t.augmentedCost = taskCost
+diff --git a/schedRUN/schedulability/schedulabilityRUN.py b/schedRUN/schedulability/schedulabilityRUN.py
+index b5fdebb..bdf4696 100644
+--- a/schedRUN/schedulability/schedulabilityRUN.py
++++ b/schedRUN/schedulability/schedulabilityRUN.py
+@@ -35,10 +35,10 @@ class SchedulabilityTestRUN(object) :
+     totalUtil = Fraction()
+     independentTaskIndex = -1
+     for index in groups :
+-      if len(groups[index]["resIds"]) != 0 :
+-        totalUtil += sum([s.getUtilization() for s in groups[index]["servers"]])
++      if len(groups[index]._resIds) != 0 :
++        totalUtil += sum([s.getUtilization() for s in groups[index]._servers])
+       else :
+-        totalUtil += sum(Fraction(t.cost, t.period) for t in groups[index]["tasks"])
++        totalUtil += sum(Fraction(t.cost, t.period) for t in groups[index]._tasks)
+         if independentTaskIndex != -1 :
+           print "Multiple independent task servers. ERROR!"
+         independentTaskIndex = index
+@@ -48,22 +48,22 @@ class SchedulabilityTestRUN(object) :
+     ''' from hereafter the taskset is schedulable. let us manage the independent tasks
+         and create the servers for them '''
+     if independentTaskIndex != -1 :
+-      independentTasks = sorted(groups[independentTaskIndex]["tasks"], key=lambda x: float(x.cost)/float(x.period), reverse=True)
+-      #groups[independentTaskIndex]["servers"] = self._packingAlgo(groups[independentTaskIndex]["tasks"])
+-      groups[independentTaskIndex]["servers"] = self._packingAlgo(independentTasks)
++      independentTasks = sorted(groups[independentTaskIndex]._tasks, key=lambda x: float(x.cost)/float(x.period), reverse=True)
++      #groups[independentTaskIndex]._servers = self._packingAlgo(groups[independentTaskIndex]._tasks)
++      groups[independentTaskIndex]._servers = self._packingAlgo(independentTasks)
+ 
+     ''' let us create servers representing the packing of the tasks '''
+     serverIndex = 0
+     for index in groups :
+-      if len(groups[index]["resIds"]) != 0 :
++      if len(groups[index]._resIds) != 0 :
+         self._servers.extend(
+           [{'cost'  : x.getUtilization().numerator,
+             'period': x.getUtilization().denominator,
+-            'tasks' : x._tasks} for x in groups[index]["servers"]])
++            'tasks' : x._tasks} for x in groups[index]._servers])
+       else :
+         self._servers.extend(
+           [{'cost'  : sum([Fraction(y.cost, y.period) for y in x]).numerator,
+             'period': sum([Fraction(y.cost, y.period) for y in x]).denominator,
+-            'tasks' : x} for x in groups[index]["servers"]])
++            'tasks' : x} for x in groups[index]._servers])
+ 
+-    return True
+\ No newline at end of file
++    return True
+diff --git a/schedRUN/test.py b/schedRUN/test.py
+index 02fd65f..055b739 100644
+--- a/schedRUN/test.py
++++ b/schedRUN/test.py
+@@ -7,12 +7,12 @@ from schedRUN.schedulability.schedulabilityRUN import SchedulabilityTestRUN as s
+ 
+ import expconfig as cfg
+ 
+-resDistr = 1.0
+-resWeight = .05
++resDistr = .50
++resWeight = .01
+ resNumb = 2
+-reqNumb = 2
++reqNumb = 1
+ utilLimit = 6.0
+-cpuLimit = 8
++cpuLimit = 100
+ 
+ counter = 0
+ avgincrement = 0.0
+@@ -22,7 +22,7 @@ taskSetGenerator = srg.SystemResourcesGenerator(
+   cfg.NAMED_UTILIZATIONS['uni-light'],
+   resDistr, resWeight, resNumb, reqNumb, utilLimit, cpuLimit)
+ 
+-for i in range(0, 100) :
++for i in range(0, 10) :
+   ts = taskSetGenerator.generateTaskSetLinear(True)
+ 
+   sched = schedTestRUN(range(0, taskSetGenerator._rn), ts)
+@@ -37,7 +37,7 @@ for i in range(0, 100) :
+            sum([float(x.cost)/float(x.period) for x in ts]))/
+            sum([float(x.cost)/float(x.period) for x in ts]))
+   avgincrement += 100.0*temp
+-  print ("iteratation %d : increment %.4f%%"%(i, temp))
++  print ("iteratation %d : increment %.4f%%"%(i, temp*100.0))
+ 
+ " FIND AVERAGE NUMBER OF SERVER PER RESOURCE "
+ print("Average increment : %.4f%%"%(avgincrement/counter))
+@@ -52,4 +52,4 @@ interfaces = srm.manageResources(range(0, taskSetGenerator._rn), ts)
+ 
+ for i in interfaces :
+   for s in interfaces[i]["servers"] :
+-    print s.toString()'''
+\ No newline at end of file
++    print s.toString()'''
+diff --git a/schedRUN/test2.py b/schedRUN/test2.py
+deleted file mode 100644
+index 02fd65f..0000000
+--- a/schedRUN/test2.py
++++ /dev/null
+@@ -1,55 +0,0 @@
+-import sys
+-sys.path.insert(1, '/home/luca/Desktop/AAAA/run_litmus_tool')
+-
+-import schedRUN.model.SystemResourceGenerator as srg
+-import schedRUN.manager.ServerResourceManager as srm
+-from schedRUN.schedulability.schedulabilityRUN import SchedulabilityTestRUN as schedTestRUN
+-
+-import expconfig as cfg
+-
+-resDistr = 1.0
+-resWeight = .05
+-resNumb = 2
+-reqNumb = 2
+-utilLimit = 6.0
+-cpuLimit = 8
+-
+-counter = 0
+-avgincrement = 0.0
+-
+-taskSetGenerator = srg.SystemResourcesGenerator(
+-  cfg.NAMED_PERIODS['uni-moderate'],
+-  cfg.NAMED_UTILIZATIONS['uni-light'],
+-  resDistr, resWeight, resNumb, reqNumb, utilLimit, cpuLimit)
+-
+-for i in range(0, 100) :
+-  ts = taskSetGenerator.generateTaskSetLinear(True)
+-
+-  sched = schedTestRUN(range(0, taskSetGenerator._rn), ts)
+-  res = sched.isSchedulable(taskSetGenerator._cl)
+-  buf = sched.getServers()
+-
+-  if not res :
+-    continue
+-
+-  counter += 1
+-  temp = ((sum([float(x['cost'])/float(x['period']) for x in buf]) -
+-           sum([float(x.cost)/float(x.period) for x in ts]))/
+-           sum([float(x.cost)/float(x.period) for x in ts]))
+-  avgincrement += 100.0*temp
+-  print ("iteratation %d : increment %.4f%%"%(i, temp))
+-
+-" FIND AVERAGE NUMBER OF SERVER PER RESOURCE "
+-print("Average increment : %.4f%%"%(avgincrement/counter))
+-'''
+-for s in buf :
+-  print "== Server %.6f / %.6f =============="%(float(s['cost'])/float(s['period']), sum([float(x.cost)/float(x.period) for x in s['tasks']]))
+-  print "cost: %d"%(s['cost'])
+-  print "period: %d"%(s['period'])
+-  print ", ".join([str(x.id) for x in s['tasks']])
+-
+-interfaces = srm.manageResources(range(0, taskSetGenerator._rn), ts)
+-
+-for i in interfaces :
+-  for s in interfaces[i]["servers"] :
+-    print s.toString()'''
+\ No newline at end of file
+-- 
+1.9.3
+

@@ -1,0 +1,12 @@
+*~
+\#*#
+*.pyc
+.ropeproject*
+
+run-mrsp/
+run-mrsp-time/
+run-sblp/
+run-sblp-obt/
+run-sblp-trace/
+run-stats/
+

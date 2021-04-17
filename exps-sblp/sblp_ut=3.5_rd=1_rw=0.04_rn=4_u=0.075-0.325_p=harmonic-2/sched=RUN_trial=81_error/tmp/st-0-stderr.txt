@@ -1,0 +1,2 @@
+Disabling 12 events.
+/dev/litmus/sched_trace0: 183504 bytes read.

@@ -1,0 +1,21 @@
+Disabling 17 events.
+Disabling 17 events.
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+disable_all: Bad file descriptor
+/dev/litmus/ft_cpu_trace0: 60415952 bytes read.

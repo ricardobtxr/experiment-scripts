@@ -1,0 +1,15 @@
+-S 0  -X RUN  -Q 0 -L 3   120 400
+-S 0  -X RUN  -Q 0 -L 3   82 300
+-S 0  -X RUN  -Q 0 -L 3   77 250
+-S 1  -X RUN  -Q 1 -L 1   67 250
+-S 1  -X RUN  -Q 1 -L 1   53 200
+-S 1  -X RUN  -Q 1 -L 1   47 200
+-S 2  -X RUN  -Q 2 -L 1   46 150
+-S 2  -X RUN  -Q 2 -L 1   44 200
+-S 2  -X RUN  -Q 2 -L 1   42 150
+-S 3  -X RUN  -Q 3 -L 1   39 400
+-S 3  -X RUN  -Q 3 -L 1   39 150
+-S 3  -X RUN  -Q 3 -L 1   33 150
+-S 4  32 200
+-S 4  23 100
+-S 4  9 125

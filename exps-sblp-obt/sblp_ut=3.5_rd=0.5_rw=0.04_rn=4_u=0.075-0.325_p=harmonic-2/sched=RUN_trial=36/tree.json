@@ -1,0 +1,74 @@
+{
+    "level": 2, 
+    "cost": 0, 
+    "children": [
+        {
+            "level": 1, 
+            "cost": 61, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 89, 
+                    "children": [], 
+                    "id": 3, 
+                    "period": 150
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 4, 
+                    "period": 375
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 0, 
+                    "period": 500
+                }
+            ], 
+            "id": 7, 
+            "period": 150
+        }, 
+        {
+            "level": 1, 
+            "cost": 521, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 879, 
+                    "children": [], 
+                    "id": 5, 
+                    "period": 1400
+                }
+            ], 
+            "id": 6, 
+            "period": 1400
+        }, 
+        {
+            "level": 1, 
+            "cost": 929, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 407, 
+                    "children": [], 
+                    "id": 2, 
+                    "period": 700
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 829, 
+                    "children": [], 
+                    "id": 1, 
+                    "period": 4200
+                }
+            ], 
+            "id": 8, 
+            "period": 4200
+        }
+    ], 
+    "id": 9, 
+    "period": 1
+}

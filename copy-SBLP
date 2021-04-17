@@ -1,0 +1,9 @@
+cp -vur ./*.py /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/
+cp -vur ./*.sh /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/
+cp -vur ./gen/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/gen/
+cp -vur ./parse/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/parse/
+cp -vur ./plot/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/plot/
+cp -vur ./run/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/run/
+cp -vur ./schedRUN/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/schedRUN/
+cp -vur ./config/* /mnt/image-SBLP/home/ricardo/litmus/experiment-scripts/config/
+

@@ -1,0 +1,16 @@
+Disabling 12 events.
+Disabling 12 events.
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+ioctl(DISABLE_CMD): Bad file descriptor
+disable_all: Bad file descriptor
+/dev/litmus/sched_trace3: 52320 bytes read.
