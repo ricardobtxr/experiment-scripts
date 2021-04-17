@@ -1,0 +1,17 @@
+-X GSN-EDF  -Q 0 -L 4   123 400
+-X GSN-EDF  -Q 0 -L 4   101 300
+-X GSN-EDF  -Q 0 -L 4   83 300
+-X GSN-EDF  -Q 0 -L 4   83 400
+-X GSN-EDF  -Q 0 -L 4   79 400
+-X GSN-EDF  -Q 1 -L 1   63 250
+-X GSN-EDF  -Q 1 -L 1   45 175
+-X GSN-EDF  -Q 1 -L 1   43 300
+-X GSN-EDF  -Q 1 -L 1   31 100
+-X GSN-EDF  -Q 2 -L 1   31 150
+-X GSN-EDF  -Q 2 -L 1   30 200
+-X GSN-EDF  -Q 2 -L 1   26 125
+-X GSN-EDF  -Q 2 -L 1   26 175
+-X GSN-EDF  -Q 3 -L 1   19 150
+-X GSN-EDF  -Q 3 -L 1   19 175
+-X GSN-EDF  -Q 3 -L 1   19 100
+-X GSN-EDF  -Q 3 -L 1   7 100
