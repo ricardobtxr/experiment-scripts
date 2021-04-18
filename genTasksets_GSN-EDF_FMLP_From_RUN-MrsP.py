@@ -31,13 +31,8 @@ def main() :
   for diretorio in diretorios:
     caminhos = [os.path.join(diretorio, nome) for nome in os.listdir(diretorio)]
     
-    num = 0
-
     for caminho in caminhos:
 
-      if num > 99:
-        break
-        
       arquivos = [os.path.join(caminho, nome) for nome in os.listdir(caminho)]
       schedFiles = [arq for arq in arquivos if arq.lower().endswith("sched.py")]
 
@@ -45,8 +40,9 @@ def main() :
         with open(schedFile, 'rw+') as sched_file:
           linesOut = []
           for line in sched_file.readlines():
-            lineTrans = line.replace('RUN', 'GSN-EDF')
-            lineTrans = re.sub('-S [0-9]  ', '', lineTrans)
+            #lineTrans = line.replace('RUN', 'GSN-EDF')
+            #lineTrans = re.sub('-S [0-9]  ', '', lineTrans)
+            lineTrans = line.replace('GSN-EDF', 'FMLP')
             linesOut.append(lineTrans)
           sched_file.seek(0)          
           for lineOut in linesOut:
