@@ -3,6 +3,7 @@
 *.pyc
 .ropeproject*
 
+run-gsn-edf-w_trace/
 run-gsn-edf/
 run-mrsp/
 run-mrsp-time/

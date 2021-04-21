@@ -15,7 +15,7 @@ do
 	 > ${base_dir}/${exp_dir}/sched_RUN_trial_${i}/stats.txt
 
     cat ${base_dir}/${exp_dir}/sched_RUN_trial_${i}/stats.txt \
-         >> ${base_dir}/${exp_dir}/stats.txt
+         >> ${base_dir}/${exp_dir}/stats_${exp_dir}.txt
 
   done
 
