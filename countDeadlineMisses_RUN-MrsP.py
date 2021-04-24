@@ -10,15 +10,15 @@ def parseArgs () :
 
   parser.add_option('-o', '--out-dir', dest='out_dir',
                       help='directory for data output',
-                      default=("/home/ricardo/litmus/experiment-scripts/run-gsn-edf/"))
+                      default=("/home/ricardo/litmus/experiment-scripts/run-sblp/"))
 
   parser.add_option('-i', '--input-dir', dest='input_dir',
                       help='directory for data input',
-                      default=("/home/ricardo/litmus/experiment-scripts/run-gsn-edf/"))
+                      default=("/home/ricardo/litmus/experiment-scripts/run-sblp/"))
 
   parser.add_option('-f', '--out-file', dest='out_file',
                       help='name of the file for output',
-                      default=("sum-preemptions-gsn-edf"))
+                      default=("sum-preemptions-sblp"))
 
   return parser.parse_args()
 
@@ -30,8 +30,7 @@ def main() :
 
   for diretorio in diretorios:
 
-    statsName = diretorio.split('/')[len(diretorio.split('/'))-1]
-    arquivos = [os.path.join(diretorio, nome) for nome in os.listdir(diretorio) if nome.lower().endswith('stats_'+statsName+'.txt')]
+    arquivos = [os.path.join(diretorio, nome) for nome in os.listdir(diretorio) if nome.lower().endswith('stats.txt')]
     schedFiles = [arq for arq in arquivos]
 
     for schedFile in schedFiles:
