@@ -1,0 +1,8 @@
+-X FMLP  -Q 0 -L 3   101 400
+-X FMLP  -Q 0 -L 3   94 400
+-X FMLP  -Q 1 -L 1   53 200
+-X FMLP  -Q 1 -L 1   42 150
+-X FMLP  -Q 2 -L 1   41 150
+-X FMLP  -Q 3 -L 1   32 100
+29 100
+12 150

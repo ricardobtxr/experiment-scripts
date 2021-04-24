@@ -1,0 +1,43 @@
+{
+    "level": 1, 
+    "cost": 0, 
+    "children": [
+        {
+            "level": 0, 
+            "cost": 353, 
+            "children": [], 
+            "id": 4, 
+            "period": 500
+        }, 
+        {
+            "level": 0, 
+            "cost": 147, 
+            "children": [], 
+            "id": 1, 
+            "period": 500
+        }, 
+        {
+            "level": 0, 
+            "cost": 0, 
+            "children": [], 
+            "id": 2, 
+            "period": 1000
+        }, 
+        {
+            "level": 0, 
+            "cost": 0, 
+            "children": [], 
+            "id": 0, 
+            "period": 25
+        }, 
+        {
+            "level": 0, 
+            "cost": 0, 
+            "children": [], 
+            "id": 3, 
+            "period": 600
+        }
+    ], 
+    "id": 5, 
+    "period": 1
+}

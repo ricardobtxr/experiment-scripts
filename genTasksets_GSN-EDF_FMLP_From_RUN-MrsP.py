@@ -40,9 +40,8 @@ def main() :
         with open(schedFile, 'rw+') as sched_file:
           linesOut = []
           for line in sched_file.readlines():
-            #lineTrans = line.replace('RUN', 'GSN-EDF')
-            #lineTrans = re.sub('-S [0-9]  ', '', lineTrans)
-            lineTrans = line.replace('GSN-EDF', 'FMLP')
+            lineTrans = line.replace('RUN', 'FMLP')
+            lineTrans = re.sub('-S [0-9]  ', '', lineTrans)
             linesOut.append(lineTrans)
           sched_file.seek(0)          
           for lineOut in linesOut:

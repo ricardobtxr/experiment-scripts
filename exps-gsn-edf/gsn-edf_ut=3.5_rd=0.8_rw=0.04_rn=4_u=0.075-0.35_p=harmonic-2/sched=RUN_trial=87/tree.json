@@ -1,0 +1,89 @@
+{
+    "level": 2, 
+    "cost": 0, 
+    "children": [
+        {
+            "level": 1, 
+            "cost": 43, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 82, 
+                    "children": [], 
+                    "id": 6, 
+                    "period": 125
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 2, 
+                    "period": 3000
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 0, 
+                    "period": 150
+                }
+            ], 
+            "id": 9, 
+            "period": 125
+        }, 
+        {
+            "level": 1, 
+            "cost": 42, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 83, 
+                    "children": [], 
+                    "id": 1, 
+                    "period": 125
+                }
+            ], 
+            "id": 8, 
+            "period": 125
+        }, 
+        {
+            "level": 1, 
+            "cost": 9, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 31, 
+                    "children": [], 
+                    "id": 3, 
+                    "period": 40
+                }
+            ], 
+            "id": 7, 
+            "period": 40
+        }, 
+        {
+            "level": 1, 
+            "cost": 19, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 304, 
+                    "children": [], 
+                    "id": 4, 
+                    "period": 525
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 1369, 
+                    "children": [], 
+                    "id": 5, 
+                    "period": 4200
+                }
+            ], 
+            "id": 10, 
+            "period": 200
+        }
+    ], 
+    "id": 11, 
+    "period": 1
+}

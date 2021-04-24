@@ -1,0 +1,82 @@
+{
+    "level": 2, 
+    "cost": 0, 
+    "children": [
+        {
+            "level": 1, 
+            "cost": 161, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 239, 
+                    "children": [], 
+                    "id": 0, 
+                    "period": 400
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 4, 
+                    "period": 125
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 1, 
+                    "period": 1500
+                }
+            ], 
+            "id": 9, 
+            "period": 400
+        }, 
+        {
+            "level": 1, 
+            "cost": 29, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 71, 
+                    "children": [], 
+                    "id": 5, 
+                    "period": 100
+                }
+            ], 
+            "id": 8, 
+            "period": 100
+        }, 
+        {
+            "level": 1, 
+            "cost": 21, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 79, 
+                    "children": [], 
+                    "id": 3, 
+                    "period": 100
+                }
+            ], 
+            "id": 7, 
+            "period": 100
+        }, 
+        {
+            "level": 1, 
+            "cost": 39, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 361, 
+                    "children": [], 
+                    "id": 2, 
+                    "period": 400
+                }
+            ], 
+            "id": 6, 
+            "period": 400
+        }
+    ], 
+    "id": 10, 
+    "period": 1
+}

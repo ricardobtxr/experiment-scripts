@@ -1,0 +1,82 @@
+{
+    "level": 2, 
+    "cost": 0, 
+    "children": [
+        {
+            "level": 1, 
+            "cost": 107, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 11, 
+                    "children": [], 
+                    "id": 1, 
+                    "period": 21
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 253, 
+                    "children": [], 
+                    "id": 0, 
+                    "period": 5250
+                }, 
+                {
+                    "level": 0, 
+                    "cost": 0, 
+                    "children": [], 
+                    "id": 4, 
+                    "period": 1750
+                }
+            ], 
+            "id": 9, 
+            "period": 250
+        }, 
+        {
+            "level": 1, 
+            "cost": 36, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 89, 
+                    "children": [], 
+                    "id": 3, 
+                    "period": 125
+                }
+            ], 
+            "id": 8, 
+            "period": 125
+        }, 
+        {
+            "level": 1, 
+            "cost": 18, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 107, 
+                    "children": [], 
+                    "id": 2, 
+                    "period": 125
+                }
+            ], 
+            "id": 7, 
+            "period": 125
+        }, 
+        {
+            "level": 1, 
+            "cost": 7, 
+            "children": [
+                {
+                    "level": 0, 
+                    "cost": 43, 
+                    "children": [], 
+                    "id": 5, 
+                    "period": 50
+                }
+            ], 
+            "id": 6, 
+            "period": 50
+        }
+    ], 
+    "id": 10, 
+    "period": 1
+}
